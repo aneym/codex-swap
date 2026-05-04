@@ -1,5 +1,9 @@
 # codex-swap
 
+[![CI](https://github.com/aneym/codex-swap/actions/workflows/ci.yml/badge.svg)](https://github.com/aneym/codex-swap/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/codex-swap.svg)](https://pypi.org/project/codex-swap/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 Pick the ChatGPT Pro account with the lowest usage every time you launch [Codex CLI](https://github.com/openai/codex). One command, no thinking.
 
 ```
@@ -188,7 +192,35 @@ codex-swap purge --yes              # before uninstall, removes ~/.codex-swap
 git clone https://github.com/aneym/codex-swap
 cd codex-swap
 bash scripts/install-dev.sh     # installs editable via uv tool
+pytest -q                       # run the unit tests
+ruff check .                    # lint
 ```
+
+## Releasing
+
+Maintainer flow:
+
+```bash
+# 1. Move bullet points into the [Unreleased] block of CHANGELOG.md
+# 2. Cut the release:
+scripts/release.sh 0.1.1
+```
+
+The script bumps `pyproject.toml`, promotes `[Unreleased]` into a versioned section, tags `v0.1.1`, and pushes. The `publish.yml` workflow then builds, uploads to PyPI via Trusted Publishing, and creates a GitHub release with the changelog notes attached. No long-lived API tokens involved.
+
+### One-time PyPI Trusted Publisher setup
+
+Before the first publish runs cleanly:
+
+1. Reserve the package name on PyPI by uploading any 0.0.x build manually (or have a maintainer claim it).
+2. On PyPI → *Manage project* → *Publishing* → add a GitHub publisher:
+   - Owner: `aneym`
+   - Repository: `codex-swap`
+   - Workflow: `publish.yml`
+   - Environment: `pypi`
+3. On GitHub → repo *Settings* → *Environments* → create `pypi` (no secrets needed — the OIDC token handles auth).
+
+After that, every `git push` of a `vX.Y.Z` tag publishes automatically.
 
 ## License
 

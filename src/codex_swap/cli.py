@@ -198,6 +198,7 @@ def cmd_launch(args) -> int:
 
 def cmd_purge(args) -> int:
     import shutil
+
     from .paths import SWAP_ROOT
     if not args.yes:
         sys.stderr.write(f"Refusing to delete {SWAP_ROOT} without --yes.\n")

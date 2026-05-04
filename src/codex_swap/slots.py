@@ -5,9 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import sys
 import time
-from pathlib import Path
 
 from .auth import (
     atomic_write_json,

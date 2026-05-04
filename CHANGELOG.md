@@ -1,5 +1,12 @@
 # Changelog
 
+All notable changes to this project will be documented in this file.
+
+The format is loosely based on [Keep a Changelog](https://keepachangelog.com/),
+and this project adheres to [Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+
 ## 0.1.0 — initial release
 
 - Per-slot snapshots of `~/.codex/auth.json` (`add`, `remove`, `list`, `status`).

@@ -20,9 +20,13 @@ classifiers = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.5"]
+
 [project.urls]
 Homepage = "https://github.com/aneym/codex-swap"
 Issues = "https://github.com/aneym/codex-swap/issues"
+Changelog = "https://github.com/aneym/codex-swap/blob/main/CHANGELOG.md"
 
 [project.scripts]
 codex-swap = "codex_swap.cli:main"
@@ -30,3 +34,15 @@ cx = "codex_swap.cli:cx_main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/codex_swap"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]  # line length warnings — keep messages readable
