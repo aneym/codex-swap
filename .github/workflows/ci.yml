@@ -25,20 +25,17 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
-      - name: Set up Python
-        run: uv python install ${{ matrix.python-version }}
-
       - name: Install package + dev deps
-        run: uv pip install --system -e ".[dev]"
+        run: uv sync --python ${{ matrix.python-version }} --extra dev
 
       - name: Lint
-        run: ruff check .
+        run: uv run ruff check .
 
       - name: Test
-        run: pytest -q
+        run: uv run pytest -q
 
       - name: Smoke test CLI
         run: |
-          codex-swap --version
-          codex-swap --help > /dev/null
-          cx --help > /dev/null || true   # cx forwards to codex which isn't installed in CI
+          uv run codex-swap --version
+          uv run codex-swap --help > /dev/null
+          uv run cx --help > /dev/null || true   # cx forwards to codex which isn't installed in CI
