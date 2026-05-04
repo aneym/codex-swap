@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cxswap"
+version = "0.1.0"
+description = "Multi-account switcher for the OpenAI Codex CLI — auto-picks the ChatGPT Pro account with the lowest usage."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "Alex Neyman" }]
+keywords = ["codex", "openai", "cli", "chatgpt", "rate-limit"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Utilities",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/alexneyman/cxswap"
+Issues = "https://github.com/alexneyman/cxswap/issues"
+
+[project.scripts]
+cxswap = "cxswap.cli:main"
+cx = "cxswap.cli:cx_main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cxswap"]
