@@ -263,7 +263,7 @@ def _probe_slot(real_codex: str, timeout: float = 10.0) -> tuple[str, str]:
     Status is one of:
       - 'ok'           - auth refreshes, responses stream
       - 'rate_limited' - auth fine, but window quota exhausted
-      - 'broken'       - refresh_token is dead, needs `cxswap reauth`
+      - 'broken'       - refresh_token is dead, needs `codex-swap reauth`
     """
     """Run a real auth-exercising probe against the active slot.
 

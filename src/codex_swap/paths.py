@@ -1,4 +1,4 @@
-"""Well-known filesystem paths for cxswap and Codex."""
+"""Well-known filesystem paths for codex-swap and Codex."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ AUTH_PATH = CODEX_HOME / "auth.json"
 SESSIONS_DIRS = [CODEX_HOME / "sessions", CODEX_HOME / "archived_sessions"]
 LOGS_DB = CODEX_HOME / "logs_2.sqlite"
 
-# cxswap's own state — overridable for testing
-SWAP_ROOT = Path(os.environ.get("CXSWAP_ROOT") or HOME / ".codex-swap")
+# codex-swap's own state — overridable for testing
+SWAP_ROOT = Path(os.environ.get("CODEX_SWAP_ROOT") or HOME / ".codex-swap")
 ACCOUNTS_DIR = SWAP_ROOT / "accounts"
 SEQUENCE_PATH = SWAP_ROOT / "sequence.json"
 USAGE_CACHE = SWAP_ROOT / "cache" / "usage.json"

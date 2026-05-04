@@ -7,7 +7,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 if command -v uv >/dev/null 2>&1; then
-  uv tool install --reinstall --from "$ROOT" cxswap
+  uv tool install --reinstall --from "$ROOT" codex-swap
 elif command -v pipx >/dev/null 2>&1; then
   pipx install --force "$ROOT"
 else
@@ -19,5 +19,5 @@ fi
 
 echo
 echo "Installed. Verify with:"
-echo "  cxswap --version"
+echo "  codex-swap --version"
 echo "  cx --help"

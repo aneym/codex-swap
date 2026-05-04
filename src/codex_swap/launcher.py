@@ -58,7 +58,7 @@ def maybe_switch(skip_auto: bool = False, pinned_slot: str | None = None) -> Non
     if not target or target == cur:
         return
     if target not in seq.get("accounts", {}):
-        sys.stderr.write(f"cxswap: slot {target} not configured\n")
+        sys.stderr.write(f"codex-swap: slot {target} not configured\n")
         return
 
     rc, msg = switch_to(target)

@@ -15,9 +15,9 @@ def find_real_codex() -> str:
 
     Codex inside Superset terminals is usually a thin bash wrapper at
     ~/.superset/bin/codex that forwards to the real binary on PATH. We
-    skip those wrapper dirs so cxswap's own swap logic isn't double-wrapped.
+    skip those wrapper dirs so codex-swap's own swap logic isn't double-wrapped.
     """
-    explicit = os.environ.get("CXSWAP_REAL_CODEX")
+    explicit = os.environ.get("CODEX_SWAP_REAL_CODEX")
     if explicit and Path(explicit).exists():
         return explicit
     for directory in os.environ.get("PATH", "").split(":"):
@@ -29,7 +29,7 @@ def find_real_codex() -> str:
     fallback = shutil.which("codex")
     if fallback:
         return fallback
-    sys.stderr.write("cxswap: codex binary not found on PATH\n")
+    sys.stderr.write("codex-swap: codex binary not found on PATH\n")
     sys.exit(127)
 
 

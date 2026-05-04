@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cxswap"
+name = "codex-swap"
 version = "0.1.0"
 description = "Multi-account switcher for the OpenAI Codex CLI — auto-picks the ChatGPT Pro account with the lowest usage."
 readme = "README.md"
@@ -21,12 +21,12 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/alexneyman/cxswap"
-Issues = "https://github.com/alexneyman/cxswap/issues"
+Homepage = "https://github.com/aneym/codex-swap"
+Issues = "https://github.com/aneym/codex-swap/issues"
 
 [project.scripts]
-cxswap = "cxswap.cli:main"
-cx = "cxswap.cli:cx_main"
+codex-swap = "codex_swap.cli:main"
+cx = "codex_swap.cli:cx_main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/cxswap"]
+packages = ["src/codex_swap"]

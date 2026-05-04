@@ -1,4 +1,4 @@
-"""argparse front-end for cxswap."""
+"""argparse front-end for codex-swap."""
 
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ def cmd_remove(args) -> int:
 def cmd_list(args) -> int:
     seq = load_sequence()
     if not seq["accounts"]:
-        print("No accounts configured. Run `cxswap onboard 3` to set them up.")
+        print("No accounts configured. Run `codex-swap onboard 3` to set them up.")
         return 0
     usage = {}
     if not args.no_usage:
@@ -124,7 +124,7 @@ def cmd_reconnect(args) -> int:
     if fixed:
         print(f"Re-minted: {', '.join(fixed)}")
     if still_broken:
-        print(f"Still broken: {', '.join(still_broken)} (run `cxswap reauth <slot>` to retry)")
+        print(f"Still broken: {', '.join(still_broken)} (run `codex-swap reauth <slot>` to retry)")
     return rc
 
 
@@ -157,7 +157,7 @@ def cmd_verify(args) -> int:
     if broken:
         notes.append(
             f"{len(broken)} slot(s) need re-minting (auth dead). "
-            f"Run: cxswap reauth {' / '.join(broken)}"
+            f"Run: codex-swap reauth {' / '.join(broken)}"
         )
     if rate_limited:
         notes.append(
@@ -210,10 +210,10 @@ def cmd_purge(args) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="cxswap",
+        prog="codex-swap",
         description="Multi-account switcher for the OpenAI Codex CLI.",
     )
-    p.add_argument("--version", action="version", version=f"cxswap {__version__}")
+    p.add_argument("--version", action="version", version=f"codex-swap {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
 
     sp_add = sub.add_parser("add", help="Save the currently logged-in account as a new slot")
@@ -264,7 +264,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp_launch.add_argument("codex_args", nargs=argparse.REMAINDER, help="Args forwarded to codex")
     sp_launch.set_defaults(func=cmd_launch)
 
-    sp_purge = sub.add_parser("purge", help="Delete all cxswap state")
+    sp_purge = sub.add_parser("purge", help="Delete all codex-swap state")
     sp_purge.add_argument("--yes", action="store_true", help="Confirm")
     sp_purge.set_defaults(func=cmd_purge)
 
@@ -278,7 +278,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def cx_main(argv: list[str] | None = None) -> int:
-    """Entry point for the `cx` shim — equivalent to `cxswap launch`."""
+    """Entry point for the `cx` shim — equivalent to `codex-swap launch`."""
     args = list(sys.argv[1:] if argv is None else argv)
     skip_auto = False
     pinned = None
@@ -288,20 +288,20 @@ def cx_main(argv: list[str] | None = None) -> int:
     # collisions with codex's own --slot / --skip-auto.
     while i < len(args):
         a = args[i]
-        if a == "--cxswap-slot" and i + 1 < len(args):
+        if a == "--codex-swap-slot" and i + 1 < len(args):
             pinned = args[i + 1]
             i += 2
             continue
-        if a == "--cxswap-skip-auto":
+        if a == "--codex-swap-skip-auto":
             skip_auto = True
             i += 1
             continue
         forwarded.append(a)
         i += 1
     # Env knobs override CLI flags.
-    if "CXSWAP_SKIP_AUTO" in __import__("os").environ:
+    if "CODEX_SWAP_SKIP_AUTO" in __import__("os").environ:
         skip_auto = True
-    env_slot = __import__("os").environ.get("CXSWAP_SLOT")
+    env_slot = __import__("os").environ.get("CODEX_SWAP_SLOT")
     if env_slot:
         pinned = env_slot
     launch(forwarded, skip_auto=skip_auto, pinned_slot=pinned)

@@ -1,4 +1,4 @@
-# cxswap
+# codex-swap
 
 Pick the ChatGPT Pro account with the lowest usage every time you launch [Codex CLI](https://github.com/openai/codex). One command, no thinking.
 
@@ -21,22 +21,22 @@ If you have multiple Codex Pro accounts and you keep hitting the 5-hour cap on w
 
 ## Install
 
-Pick one — both install two commands (`cxswap` and `cx`) into `~/.local/bin`:
+Pick one — both install two commands (`codex-swap` and `cx`) into `~/.local/bin`:
 
 ```bash
 # Recommended (faster, isolated):
-uv tool install cxswap
+uv tool install codex-swap
 
 # or:
-pipx install cxswap
+pipx install codex-swap
 ```
 
-Until cxswap is on PyPI, install from this repo:
+Until codex-swap is on PyPI, install from this repo:
 
 ```bash
-uv tool install git+https://github.com/alexneyman/cxswap
+uv tool install git+https://github.com/aneym/codex-swap
 # or:
-pipx install git+https://github.com/alexneyman/cxswap
+pipx install git+https://github.com/aneym/codex-swap
 ```
 
 Make sure `~/.local/bin` is on your `PATH`. If not:
@@ -49,7 +49,7 @@ exec zsh
 Verify:
 
 ```bash
-cxswap --version
+codex-swap --version
 cx --help
 ```
 
@@ -59,13 +59,13 @@ You need to be logged into Codex with one of your ChatGPT Pro accounts already (
 
 ```bash
 # 1. Save the account you're already logged into as slot 1.
-cxswap add
+codex-swap add
 
-# 2. Add the rest of your accounts. cxswap will pop a browser per account.
-cxswap onboard 2
+# 2. Add the rest of your accounts. codex-swap will pop a browser per account.
+codex-swap onboard 2
 
 # 3. Confirm everything works.
-cxswap verify
+codex-swap verify
 ```
 
 Output of `verify` should be all `ok` (or `rate_limited` if a window is currently capped — that's fine, auth is still healthy).
@@ -86,13 +86,13 @@ That's the whole interface.
 If a slot's refresh token dies (you ran `codex logout` somewhere, the token aged out, etc.), `cx` will still try to use it and codex will print "refresh token was already used" or similar. Fix everything in one shot:
 
 ```bash
-cxswap reconnect    # finds dead slots, walks you through fresh logins
+codex-swap reconnect    # finds dead slots, walks you through fresh logins
 ```
 
 If you want to fix one specific slot:
 
 ```bash
-cxswap reauth 1     # opens browser, log in to that slot's account
+codex-swap reauth 1     # opens browser, log in to that slot's account
 ```
 
 ## All commands
@@ -100,18 +100,18 @@ cxswap reauth 1     # opens browser, log in to that slot's account
 | Command | What it does |
 |---------|--------------|
 | `cx` | Auto-pick lowest-usage slot and exec codex (this is what you'll use) |
-| `cxswap add` | Save the currently logged-in account as a new slot |
-| `cxswap remove <slot>` | Remove a slot |
-| `cxswap list` | Show all slots with usage % |
-| `cxswap status` | Show which slot is active right now |
-| `cxswap switch [<slot>]` | Switch to a slot (no arg → rotate to next) |
-| `cxswap reauth <slot>` | Re-mint a slot via fresh `codex login` |
-| `cxswap reconnect` | Verify all slots, then reauth every broken one |
-| `cxswap onboard [N]` | Guided login for N accounts in a row |
-| `cxswap verify` | Test every slot with a real `codex exec` call |
-| `cxswap usage` | Refresh & print the per-slot usage cache |
-| `cxswap stash` | Snapshot live `auth.json` back into its slot |
-| `cxswap purge --yes` | Delete all cxswap state |
+| `codex-swap add` | Save the currently logged-in account as a new slot |
+| `codex-swap remove <slot>` | Remove a slot |
+| `codex-swap list` | Show all slots with usage % |
+| `codex-swap status` | Show which slot is active right now |
+| `codex-swap switch [<slot>]` | Switch to a slot (no arg → rotate to next) |
+| `codex-swap reauth <slot>` | Re-mint a slot via fresh `codex login` |
+| `codex-swap reconnect` | Verify all slots, then reauth every broken one |
+| `codex-swap onboard [N]` | Guided login for N accounts in a row |
+| `codex-swap verify` | Test every slot with a real `codex exec` call |
+| `codex-swap usage` | Refresh & print the per-slot usage cache |
+| `codex-swap stash` | Snapshot live `auth.json` back into its slot |
+| `codex-swap purge --yes` | Delete all codex-swap state |
 
 `<slot>` accepts a slot number, an email, or an account_id.
 
@@ -129,30 +129,30 @@ If you like shorter names, add to your `~/.zshrc`:
 ```bash
 cxraw()       { CXSWAP_SKIP_AUTO=1 cx "$@"; }
 cxslot()      { CXSWAP_SLOT="$1" cx "${@:2}"; }
-cxaccounts()  { cxswap list "$@"; }
-cxstatus()    { cxswap status "$@"; }
-cxverify()    { cxswap verify "$@"; }
-cxreauth()    { cxswap reauth "$@"; }
-cxreconnect() { cxswap reconnect "$@"; }
+cxaccounts()  { codex-swap list "$@"; }
+cxstatus()    { codex-swap status "$@"; }
+cxverify()    { codex-swap verify "$@"; }
+cxreauth()    { codex-swap reauth "$@"; }
+cxreconnect() { codex-swap reconnect "$@"; }
 ```
 
 Reload with `exec zsh`.
 
 ## How "lowest usage" is computed
 
-After every Codex turn, the CLI persists a `token_count` event with `rate_limits.primary` (5-hour window) and `rate_limits.secondary` (7-day window) into `~/.codex/sessions/**/*.jsonl`. cxswap correlates conversation IDs to account IDs via `~/.codex/logs_2.sqlite` (`user.account_id="..."` + `conversation.id=...` in the otel log bodies), then for each managed slot pulls the latest snapshot from a rollout owned by that slot. The picker sorts by `(5h%, 7d%, slot#)`.
+After every Codex turn, the CLI persists a `token_count` event with `rate_limits.primary` (5-hour window) and `rate_limits.secondary` (7-day window) into `~/.codex/sessions/**/*.jsonl`. codex-swap correlates conversation IDs to account IDs via `~/.codex/logs_2.sqlite` (`user.account_id="..."` + `conversation.id=...` in the otel log bodies), then for each managed slot pulls the latest snapshot from a rollout owned by that slot. The picker sorts by `(5h%, 7d%, slot#)`.
 
 A slot with no usage data sorts as if it were 101% — it'll be picked only after the others have logged usage.
 
 ## Critical: never run `codex logout`
 
-`codex logout` calls a server-side revoke that **invalidates the refresh token** at the OAuth provider. Every other slot whose snapshot pre-dates that revoke is then permanently dead. cxswap's onboarding and reauth flows use `rm ~/.codex/auth.json` instead — same effect locally, no server-side blast radius.
+`codex logout` calls a server-side revoke that **invalidates the refresh token** at the OAuth provider. Every other slot whose snapshot pre-dates that revoke is then permanently dead. codex-swap's onboarding and reauth flows use `rm ~/.codex/auth.json` instead — same effect locally, no server-side blast radius.
 
-If a slot ever goes bad (you ran `codex logout` by hand, or the token aged out), `cxswap reconnect` will detect and fix it.
+If a slot ever goes bad (you ran `codex logout` by hand, or the token aged out), `codex-swap reconnect` will detect and fix it.
 
 ## Refresh token rotation, briefly
 
-ChatGPT issues single-use refresh tokens that rotate on every successful refresh. cxswap snapshots the live `auth.json` back into its slot before every swap-out, so the slot's snapshot always carries the latest rotated token. You only get into trouble if you run `codex` twice on the same slot in parallel — both refresh independently, one of them ends up with a token the server has already burned.
+ChatGPT issues single-use refresh tokens that rotate on every successful refresh. codex-swap snapshots the live `auth.json` back into its slot before every swap-out, so the slot's snapshot always carries the latest rotated token. You only get into trouble if you run `codex` twice on the same slot in parallel — both refresh independently, one of them ends up with a token the server has already burned.
 
 **Safe:** sequential `cx` runs, even across many accounts.
 **Unsafe:** two terminals running `cx` against the same slot at the same time.
@@ -167,26 +167,26 @@ ChatGPT issues single-use refresh tokens that rotate on every successful refresh
 └── cache/usage.json         # cached rate-limit snapshots
 ```
 
-`~/.codex/auth.json` is the live file Codex reads. cxswap only ever swaps that one file in and out.
+`~/.codex/auth.json` is the live file Codex reads. codex-swap only ever swaps that one file in and out.
 
 ## Caveats
 
 - macOS only right now. The "real codex" resolver also strips Superset's bash wrapper from `PATH`.
 - Requires `codex` v0.122 or newer (the rollout schema with `rate_limits.primary/secondary` was added around that time).
-- `OPENAI_API_KEY` in your environment will override `auth.json`. cxswap unsets it when running `codex login` so the OAuth path wins; if you want `cx` to do the same for the launched session, wrap it: `alias cx='env -u OPENAI_API_KEY cxswap launch'`.
+- `OPENAI_API_KEY` in your environment will override `auth.json`. codex-swap unsets it when running `codex login` so the OAuth path wins; if you want `cx` to do the same for the launched session, wrap it: `alias cx='env -u OPENAI_API_KEY codex-swap launch'`.
 
 ## Uninstall
 
 ```bash
-uv tool uninstall cxswap        # or: pipx uninstall cxswap
-cxswap purge --yes              # before uninstall, removes ~/.codex-swap
+uv tool uninstall codex-swap        # or: pipx uninstall codex-swap
+codex-swap purge --yes              # before uninstall, removes ~/.codex-swap
 ```
 
 ## Development
 
 ```bash
-git clone https://github.com/alexneyman/cxswap
-cd cxswap
+git clone https://github.com/aneym/codex-swap
+cd codex-swap
 bash scripts/install-dev.sh     # installs editable via uv tool
 ```
 
