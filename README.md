@@ -58,6 +58,7 @@ alias cx='cxswap launch'
 | `cxswap status` | Show which slot is active right now |
 | `cxswap switch [<slot>]` | Switch to a slot (no arg → rotate to next) |
 | `cxswap reauth <slot>` | Re-mint a slot via fresh `codex login` |
+| `cxswap reconnect` | Find every broken slot and walk you through fresh logins |
 | `cxswap onboard [N]` | Guided login for N accounts in a row |
 | `cxswap verify` | Test every slot's token by running `codex login status` |
 | `cxswap usage` | Refresh & print the per-slot usage cache |

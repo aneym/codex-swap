@@ -15,9 +15,10 @@ from .slots import (
     add_current,
     current_slot,
     load_sequence,
+    reauth,
+    reconnect_broken,
     remove,
     rotate,
-    reauth,
     stash_active,
     switch_to,
     verify_all,
@@ -111,6 +112,19 @@ def cmd_switch(args) -> int:
 def cmd_reauth(args) -> int:
     rc, msg = reauth(args.target)
     print(msg)
+    return rc
+
+
+def cmd_reconnect(args) -> int:
+    rc, fixed, still_broken = reconnect_broken()
+    if not fixed and not still_broken:
+        print("All slots are healthy. Nothing to reconnect.")
+        return 0
+    print()
+    if fixed:
+        print(f"Re-minted: {', '.join(fixed)}")
+    if still_broken:
+        print(f"Still broken: {', '.join(still_broken)} (run `cxswap reauth <slot>` to retry)")
     return rc
 
 
@@ -223,6 +237,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp_reauth = sub.add_parser("reauth", help="Re-mint a slot via fresh codex login")
     sp_reauth.add_argument("target", help="slot number, email, or account_id")
     sp_reauth.set_defaults(func=cmd_reauth)
+
+    sp_reconnect = sub.add_parser(
+        "reconnect",
+        help="Verify all slots, then walk you through reauth for each broken one",
+    )
+    sp_reconnect.set_defaults(func=cmd_reconnect)
 
     sp_stash = sub.add_parser("stash", help="Snapshot live auth.json into its slot (preserve refreshed tokens)")
     sp_stash.set_defaults(func=cmd_stash)

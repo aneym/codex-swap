@@ -349,6 +349,36 @@ def verify_all() -> list[tuple[str, str, str]]:
     return results
 
 
+def reconnect_broken() -> tuple[int, list[str], list[str]]:
+    """Verify every slot, then reauth any that came back broken.
+
+    Returns (overall_rc, fixed, still_broken). The user is prompted to log
+    into each broken slot's expected account in turn.
+    """
+    results = verify_all()
+    broken_slots = [slot for slot, status, _ in results if status == "broken"]
+    if not broken_slots:
+        return 0, [], []
+
+    seq = load_sequence()
+    print(f"\nFound {len(broken_slots)} broken slot(s). Walking you through a fresh login for each.")
+    print("(We'll never call 'codex logout', so your other slots stay safe.)\n")
+
+    fixed: list[str] = []
+    still_broken: list[str] = []
+    for slot in broken_slots:
+        email = seq["accounts"].get(slot, {}).get("email") or "(unknown email)"
+        print(f"\n--- Slot {slot}: {email} ---")
+        rc, msg = reauth(slot)
+        print(msg)
+        if rc == 0:
+            fixed.append(slot)
+        else:
+            still_broken.append(slot)
+
+    return (1 if still_broken else 0), fixed, still_broken
+
+
 def _resolve(seq: dict, target: str) -> str | None:
     target = str(target)
     for slot, acc in seq["accounts"].items():
