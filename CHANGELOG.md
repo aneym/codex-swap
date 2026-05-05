@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## 0.1.1 — 2026-05-05
+
 - Add `import-profile` for saving existing `~/.codex-profiles/*/auth.json` snapshots, including API-key auth profiles identified by non-secret fingerprints.
 - Pick the newest detected Codex binary on `PATH` so stale installs do not shadow newer ones.
 - Harden `verify` so timeout output is decoded safely, non-auth probe failures are not mislabeled as broken refresh tokens, and probes use an explicit lightweight model/prompt.
