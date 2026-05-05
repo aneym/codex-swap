@@ -1,4 +1,16 @@
-"""Compute per-slot Codex rate-limit usage from local rollouts."""
+"""Per-slot Codex rate-limit usage — durable persisted store with decay.
+
+Design:
+- One persisted record per slot, keyed by slot id, written to USAGE_CACHE.
+- Records survive across launches; never wiped because a rescan didn't see them.
+- A record's accuracy is preserved by `resets_at`-based decay: when the API's
+  reset time has passed, `effective_used_percent` returns 0 for that window
+  without re-measuring.
+- Rollout scans merge new findings into the persisted store (highest
+  `scanned_at` per slot wins). Seed probes also merge into the same store.
+- The launcher reads the persisted store; it never auto-seeds. Seeding is
+  explicit (`codex-swap seed`) or runs once on `onboard` / `add` finalize.
+"""
 
 from __future__ import annotations
 
@@ -18,6 +30,7 @@ MAX_ROLLOUTS_SCAN = 80
 
 
 def recent_rollouts(limit: int = MAX_ROLLOUTS_SCAN) -> list[Path]:
+    """Most-recent rollouts under the user's CODEX_HOME (not isolated tmp dirs)."""
     files: list[Path] = []
     for root in SESSIONS_DIRS:
         if not root.exists():
@@ -65,7 +78,6 @@ def session_account_map() -> dict[str, str]:
     try:
         uri = f"file:{LOGS_DB}?mode=ro&immutable=1"
         conn = sqlite3.connect(uri, uri=True, timeout=2.0)
-        # logs.ts is in seconds. Cover both rate-limit windows.
         cutoff = int(time.time() - 8 * 86400)
         cur = conn.execute(
             "SELECT feedback_log_body FROM logs "
@@ -89,8 +101,14 @@ def session_account_map() -> dict[str, str]:
     return mapping
 
 
-def compute_usage() -> dict:
-    """Return {slot: {primary, secondary, plan_type, scanned_at, source_rollout}}."""
+def scan_rollouts_for_usage() -> dict[str, dict]:
+    """Find usage data per slot from local rollouts.
+
+    Returns {slot: record} for every slot whose latest rollout had rate_limits.
+    A "record" is the unified shape used by the persisted store:
+
+        {primary, secondary, plan_type, scanned_at, source, source_path}
+    """
     seq = read_json(SEQUENCE_PATH) or {}
     accounts = seq.get("accounts", {}) or {}
     if not accounts:
@@ -114,32 +132,148 @@ def compute_usage() -> dict:
         rl = latest_rate_limits(path)
         if not rl:
             continue
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            mtime = time.time()
         found[slot] = {
             "primary": rl.get("primary"),
             "secondary": rl.get("secondary"),
             "plan_type": rl.get("plan_type"),
-            "source_rollout": str(path),
-            "scanned_at": time.time(),
+            "scanned_at": mtime,
+            "source": "rollout",
+            "source_path": str(path),
         }
         if len(found) == len(by_account):
             break
     return found
 
 
-def refresh_cache() -> dict:
-    data = compute_usage()
+# --- persisted store ----------------------------------------------------------
+
+
+def load_persisted() -> dict[str, dict]:
+    """Return the persisted per-slot usage store (mutable copy)."""
+    raw = read_json(USAGE_CACHE) or {}
+    data = raw.get("data") if isinstance(raw, dict) else None
+    if not isinstance(data, dict):
+        return {}
+    return {str(k): v for k, v in data.items() if isinstance(v, dict)}
+
+
+def save_persisted(data: dict[str, dict]) -> None:
+    """Atomically write the persisted store with a top-level timestamp."""
     payload = {"timestamp": time.time(), "data": data}
     atomic_write_json(USAGE_CACHE, payload)
-    return payload
+
+
+def merge_into_persisted(updates: dict[str, dict]) -> dict[str, dict]:
+    """Merge per-slot updates into the persisted store; higher scanned_at wins.
+
+    Slots not present in `updates` keep their existing record. The picker
+    therefore never loses sight of a slot just because the latest rescan
+    didn't surface it.
+    """
+    persisted = load_persisted()
+    changed = False
+    for slot, new_rec in updates.items():
+        if not isinstance(new_rec, dict):
+            continue
+        existing = persisted.get(slot) or {}
+        new_ts = float(new_rec.get("scanned_at") or 0)
+        old_ts = float(existing.get("scanned_at") or 0)
+        if new_ts >= old_ts:
+            persisted[slot] = new_rec
+            changed = True
+    if changed:
+        save_persisted(persisted)
+    return persisted
+
+
+def drop_slot_record(slot: str) -> None:
+    """Remove a single slot's record (used when a slot is removed from sequence)."""
+    persisted = load_persisted()
+    if str(slot) in persisted:
+        persisted.pop(str(slot), None)
+        save_persisted(persisted)
+
+
+# --- decay --------------------------------------------------------------------
+
+
+def effective_used_percent(window: dict | None, now: float | None = None) -> float | None:
+    """`used_percent` corrected for the API's window reset.
+
+    Once `resets_at` has passed, the window has reset server-side, so the
+    persisted percent is stale; we report 0% for that window.
+    Returns None when there's no data to decay.
+    """
+    if not isinstance(window, dict):
+        return None
+    pct = window.get("used_percent")
+    if pct is None:
+        return None
+    resets_at = window.get("resets_at")
+    if isinstance(resets_at, (int, float)):
+        if (now if now is not None else time.time()) >= float(resets_at):
+            return 0.0
+    try:
+        return float(pct)
+    except (TypeError, ValueError):
+        return None
+
+
+def effective_record(rec: dict | None, now: float | None = None) -> dict | None:
+    """Return a copy of `rec` with decayed `used_percent` per window.
+
+    The decayed value is written to a parallel `used_percent_effective` key
+    so callers can compare to the raw value if needed.
+    """
+    if not isinstance(rec, dict):
+        return None
+    now = now if now is not None else time.time()
+    out = dict(rec)
+    for key in ("primary", "secondary"):
+        window = rec.get(key)
+        if not isinstance(window, dict):
+            continue
+        eff = effective_used_percent(window, now)
+        new_window = dict(window)
+        if eff is not None:
+            new_window["used_percent_effective"] = eff
+            if eff != window.get("used_percent"):
+                new_window["window_reset"] = True
+        out[key] = new_window
+    return out
+
+
+# --- public refresh entry points ---------------------------------------------
+
+
+def refresh_from_rollouts() -> dict[str, dict]:
+    """Cheap rollout scan; merges new findings into the persisted store."""
+    fresh = scan_rollouts_for_usage()
+    if fresh:
+        return merge_into_persisted(fresh)
+    return load_persisted()
+
+
+# --- back-compat shims (used by older callsites and tests) -------------------
+
+
+def compute_usage() -> dict:
+    """Back-compat alias for the rollout scanner. Returns only freshly-found data."""
+    return scan_rollouts_for_usage()
+
+
+def refresh_cache() -> dict:
+    """Back-compat alias mirroring the old return shape `{timestamp, data}`."""
+    data = refresh_from_rollouts()
+    return {"timestamp": time.time(), "data": data}
 
 
 def cached(max_age: int) -> dict:
-    raw = read_json(USAGE_CACHE)
-    if not raw or not isinstance(raw.get("data"), dict):
-        return {}
-    ts = raw.get("timestamp")
-    if not isinstance(ts, (int, float)):
-        return {}
-    if (time.time() - ts) >= max_age:
-        return {}
-    return raw["data"]
+    """Back-compat: returns persisted data. `max_age` is ignored — the store
+    is durable now and decays per-window via `effective_used_percent`."""
+    _ = max_age
+    return load_persisted()

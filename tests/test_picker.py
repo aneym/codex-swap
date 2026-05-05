@@ -2,16 +2,26 @@
 
 from __future__ import annotations
 
-from codex_swap.launcher import _choose, _slot_score
+import time
+
+from codex_swap.launcher import (
+    NEAR_CAP_PERCENT,
+    _choose,
+    _slot_score,
+    _unknown_slots,
+)
 
 
-def test_slot_score_unknown_usage_sorts_last():
-    score = _slot_score("3", {})
-    # Unknown usage should sort *after* any known data — penalty bucket is 1.
-    assert score[0] == 1
+def test_slot_score_unknown_usage_treated_as_fresh():
+    """Unknown usage scores as bucket 1 with 0/0 percents (assume fresh)."""
+    bucket, pri, sec, slot = _slot_score("3", {})
+    assert bucket == 1
+    assert pri == 0.0
+    assert sec == 0.0
+    assert slot == 3
 
 
-def test_slot_score_known_usage_uses_pcts():
+def test_slot_score_known_low_usage_uses_pcts():
     usage = {
         "1": {
             "primary": {"used_percent": 25.0},
@@ -25,10 +35,51 @@ def test_slot_score_known_usage_uses_pcts():
     assert slot == 1
 
 
+def test_slot_score_near_cap_falls_below_unknown():
+    """Known + near cap on either window ranks WORSE than an unknown slot."""
+    usage_high = {
+        "1": {
+            "primary": {"used_percent": 95.0},
+            "secondary": {"used_percent": 50.0},
+        }
+    }
+    near_cap_bucket, *_ = _slot_score("1", usage_high)
+    unknown_bucket, *_ = _slot_score("2", {})
+    assert near_cap_bucket > unknown_bucket
+    assert near_cap_bucket == 2
+
+
+def test_slot_score_near_cap_secondary_alone_is_enough():
+    """High secondary (7d) usage alone qualifies as near-cap."""
+    usage = {
+        "1": {
+            "primary": {"used_percent": 5.0},
+            "secondary": {"used_percent": NEAR_CAP_PERCENT + 1.0},
+        }
+    }
+    bucket, *_ = _slot_score("1", usage)
+    assert bucket == 2
+
+
+def test_slot_score_decays_after_resets_at():
+    """A 95% slot whose primary window has reset should score as 0% via decay."""
+    past = time.time() - 60
+    usage = {
+        "1": {
+            "primary": {"used_percent": 95.0, "resets_at": past},
+            "secondary": {"used_percent": 30.0, "resets_at": past + 10_000},
+        }
+    }
+    bucket, pri, sec, _ = _slot_score("1", usage)
+    assert bucket == 0  # primary decayed to 0; secondary still healthy
+    assert pri == 0.0
+    assert sec == 30.0
+
+
 def test_choose_picks_lowest_primary():
     seq = {"sequence": ["1", "2", "3"]}
     usage = {
-        "1": {"primary": {"used_percent": 80.0}, "secondary": {"used_percent": 0}},
+        "1": {"primary": {"used_percent": 70.0}, "secondary": {"used_percent": 0}},
         "2": {"primary": {"used_percent": 5.0}, "secondary": {"used_percent": 50}},
         "3": {"primary": {"used_percent": 5.0}, "secondary": {"used_percent": 10}},
     }
@@ -36,13 +87,38 @@ def test_choose_picks_lowest_primary():
     assert _choose(seq, usage) == "3"
 
 
-def test_choose_skips_unknown_when_known_is_lower():
+def test_choose_prefers_known_low_over_unknown():
+    """Known + low usage still beats unknown — don't waste a rotation."""
+    seq = {"sequence": ["1", "2"]}
+    usage = {"1": {"primary": {"used_percent": 10.0}, "secondary": {"used_percent": 0}}}
+    assert _choose(seq, usage) == "1"
+
+
+def test_choose_picks_unknown_over_near_cap():
+    """The bug fix: a 90% slot must NOT block rotation to an unknown slot."""
+    seq = {"sequence": ["1", "2", "3"]}
+    usage = {
+        "1": {"primary": {"used_percent": 90.0}, "secondary": {"used_percent": 27.0}},
+    }
+    assert _choose(seq, usage) in {"2", "3"}
+
+
+def test_choose_picks_known_low_over_unknown_and_near_cap():
+    seq = {"sequence": ["1", "2", "3"]}
+    usage = {
+        "1": {"primary": {"used_percent": 90.0}, "secondary": {"used_percent": 27.0}},
+        "2": {"primary": {"used_percent": 8.0}, "secondary": {"used_percent": 5.0}},
+    }
+    assert _choose(seq, usage) == "2"
+
+
+def test_choose_picks_least_bad_when_all_at_cap():
     seq = {"sequence": ["1", "2"]}
     usage = {
-        "1": {"primary": {"used_percent": 10.0}, "secondary": {"used_percent": 0}}
+        "1": {"primary": {"used_percent": 95.0}, "secondary": {"used_percent": 30.0}},
+        "2": {"primary": {"used_percent": 88.0}, "secondary": {"used_percent": 30.0}},
     }
-    # Slot 2 has no usage data -> sorts last; slot 1 wins.
-    assert _choose(seq, usage) == "1"
+    assert _choose(seq, usage) == "2"
 
 
 def test_choose_picks_unknown_only_when_no_known_data():
@@ -52,3 +128,33 @@ def test_choose_picks_unknown_only_when_no_known_data():
 
 def test_choose_empty_sequence_returns_none():
     assert _choose({"sequence": []}, {}) is None
+
+
+def test_choose_routes_to_decayed_slot_after_reset():
+    """A previously-near-cap slot whose window reset wins over an at-cap one."""
+    past = time.time() - 30
+    seq = {"sequence": ["1", "2"]}
+    usage = {
+        "1": {
+            "primary": {"used_percent": 92.0, "resets_at": time.time() + 10_000},
+            "secondary": {"used_percent": 30.0},
+        },
+        "2": {
+            "primary": {"used_percent": 91.0, "resets_at": past},
+            "secondary": {"used_percent": 30.0},
+        },
+    }
+    # Slot 2's primary decayed to 0; slot 1 is still at 92.
+    assert _choose(seq, usage) == "2"
+
+
+def test_unknown_slots_returns_only_unmeasured():
+    seq = {"accounts": {"1": {}, "2": {}, "3": {}}}
+    usage = {"1": {"primary": {"used_percent": 10.0}}}
+    assert _unknown_slots(seq, usage) == ["2", "3"]
+
+
+def test_unknown_slots_empty_when_all_known():
+    seq = {"accounts": {"1": {}, "2": {}}}
+    usage = {"1": {}, "2": {}}
+    assert _unknown_slots(seq, usage) == []

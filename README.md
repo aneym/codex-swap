@@ -20,9 +20,11 @@ If you have multiple Codex Pro accounts and you keep hitting the 5-hour cap on w
 ## What it does
 
 - Saves a snapshot of each account's `~/.codex/auth.json` into its own slot.
-- Before each `cx` launch, scans your local Codex rollouts to learn each account's primary (5-hour) and secondary (7-day) usage percent.
+- Keeps a durable per-slot usage store (5-hour + 7-day windows) and decays each window automatically when the API's `resets_at` time passes — so the picker stays accurate without re-measuring.
+- On each `cx` launch, does a cheap rollout scan and merges any fresh findings into that store. Slots not seen in this scan keep their previous record.
 - Swaps `auth.json` to the slot with the lowest usage, then `exec`s `codex`.
 - Snapshots back any refreshed tokens so the rotation chain never breaks.
+- `codex-swap seed` populates usage for every slot in parallel via isolated `CODEX_HOME`s — one-time setup; no re-seeding on every launch.
 
 ## Install
 
@@ -43,9 +45,9 @@ pipx install codex-swap
 If PyPI is unavailable, install the latest GitHub release wheel directly:
 
 ```bash
-uv tool install https://github.com/aneym/codex-swap/releases/download/v0.1.2/codex_swap-0.1.2-py3-none-any.whl
+uv tool install https://github.com/aneym/codex-swap/releases/download/v0.1.3/codex_swap-0.1.3-py3-none-any.whl
 # or:
-pipx install https://github.com/aneym/codex-swap/releases/download/v0.1.2/codex_swap-0.1.2-py3-none-any.whl
+pipx install https://github.com/aneym/codex-swap/releases/download/v0.1.3/codex_swap-0.1.3-py3-none-any.whl
 ```
 
 Make sure `~/.local/bin` is on your `PATH`. If not:
@@ -73,6 +75,8 @@ You need to be logged into Codex with one of your ChatGPT Pro accounts already (
 codex-swap add
 
 # 2. Add the rest of your accounts. codex-swap will pop a browser per account.
+#    onboard auto-seeds usage for every slot at the end (parallel ~50 tokens
+#    per slot), so `cx` has informed picks from the very first launch.
 codex-swap onboard 2
 
 # 3. Confirm everything works.
@@ -80,6 +84,13 @@ codex-swap verify
 ```
 
 Output of `verify` should be all `ok` (or `rate_limited` if a window is currently capped — that's fine, auth is still healthy). If a row says `error`, the probe failed for a local Codex/model/config reason rather than a dead refresh token.
+
+If you imported slots manually (e.g. via `add` / `import-profile`) and skipped onboard, run the seed step yourself once:
+
+```bash
+codex-swap seed         # probes any slot without a usage record, in parallel
+codex-swap seed --all   # re-seed every slot (re-measure)
+```
 
 If you already have Codex profile directories, import them instead of logging in again:
 
@@ -117,22 +128,23 @@ codex-swap reauth 1     # opens browser, log in to that slot's account
 
 ## All commands
 
-| Command | What it does |
-|---------|--------------|
-| `cx` | Auto-pick lowest-usage slot and exec codex (this is what you'll use) |
-| `codex-swap add` | Save the currently logged-in account as a new slot |
+| Command                               | What it does                                                                    |
+| ------------------------------------- | ------------------------------------------------------------------------------- |
+| `cx`                                  | Auto-pick lowest-usage slot and exec codex (this is what you'll use)            |
+| `codex-swap add`                      | Save the currently logged-in account as a new slot                              |
 | `codex-swap import-profile <profile>` | Save an existing `~/.codex-profiles/<profile>/auth.json` or auth file as a slot |
-| `codex-swap remove <slot>` | Remove a slot |
-| `codex-swap list` | Show all slots with usage % |
-| `codex-swap status` | Show which slot is active right now |
-| `codex-swap switch [<slot>]` | Switch to a slot (no arg → rotate to next) |
-| `codex-swap reauth <slot>` | Re-mint a slot via fresh `codex login` |
-| `codex-swap reconnect` | Verify all slots, then reauth every broken one |
-| `codex-swap onboard [N]` | Guided login for N accounts in a row |
-| `codex-swap verify` | Test every slot with a real `codex exec` call |
-| `codex-swap usage` | Refresh & print the per-slot usage cache |
-| `codex-swap stash` | Snapshot live `auth.json` back into its slot |
-| `codex-swap purge --yes` | Delete all codex-swap state |
+| `codex-swap remove <slot>`            | Remove a slot                                                                   |
+| `codex-swap list`                     | Show all slots with usage %                                                     |
+| `codex-swap status`                   | Show which slot is active right now                                             |
+| `codex-swap switch [<slot>]`          | Switch to a slot (no arg → rotate to next)                                      |
+| `codex-swap reauth <slot>`            | Re-mint a slot via fresh `codex login`                                          |
+| `codex-swap reconnect`                | Verify all slots, then reauth every broken one                                  |
+| `codex-swap onboard [N]`              | Guided login for N accounts in a row                                            |
+| `codex-swap verify`                   | Test every slot with a real `codex exec` call                                   |
+| `codex-swap usage`                    | Refresh & print the per-slot usage cache (decay-aware)                          |
+| `codex-swap seed [<slot>...]`         | Probe slots in parallel (isolated `CODEX_HOME`) to populate usage data          |
+| `codex-swap stash`                    | Snapshot live `auth.json` back into its slot                                    |
+| `codex-swap purge --yes`              | Delete all codex-swap state                                                     |
 
 `<slot>` accepts a slot number, an email, or an account_id.
 
@@ -163,9 +175,19 @@ Reload with `exec zsh`.
 
 ## How "lowest usage" is computed
 
-After every Codex turn, the CLI persists a `token_count` event with `rate_limits.primary` (5-hour window) and `rate_limits.secondary` (7-day window) into `~/.codex/sessions/**/*.jsonl`. codex-swap correlates conversation IDs to account IDs via `~/.codex/logs_2.sqlite` (`user.account_id="..."` + `conversation.id=...` in the otel log bodies), then for each managed slot pulls the latest snapshot from a rollout owned by that slot. The picker sorts by `(5h%, 7d%, slot#)`.
+Codex persists a `token_count` event with `rate_limits.primary` (5-hour window) and `rate_limits.secondary` (7-day window) into `~/.codex/sessions/**/*.jsonl` after every turn. codex-swap correlates conversation IDs to account IDs via `~/.codex/logs_2.sqlite` (`user.account_id="..."` + `conversation.id=...` in the otel log bodies) to figure out which slot owns each rollout.
 
-A slot with no usage data sorts as if it were 101% — it'll be picked only after the others have logged usage.
+The persisted store at `~/.codex-swap/cache/usage.json` is **durable**: each rescan merges new findings (per-slot, higher `scanned_at` wins) instead of overwriting. Slots not seen in a given scan keep their previous record. When a window's `resets_at` time passes, codex-swap reports that window as 0% via decay — the picker doesn't need to re-measure to notice the reset.
+
+Slots with no record at all (e.g. freshly added, never used here) get usage data via `codex-swap seed`, which probes each named slot in parallel using its own temporary `CODEX_HOME` (no contention with the live `~/.codex/auth.json`). `onboard` runs this automatically; otherwise call it manually once.
+
+The picker sorts in three buckets, lower wins:
+
+1. Known + healthy (both windows below 80% after decay)
+2. Unknown (no record yet — assumed fresh; bias toward learning)
+3. Known + at/above 80% on either window (last resort)
+
+Within a bucket, ties break on `(5h%, 7d%, slot#)`.
 
 ## Critical: never run `codex logout`
 
@@ -187,7 +209,7 @@ ChatGPT issues single-use refresh tokens that rotate on every successful refresh
 ├── accounts/<N>/auth.json   # per-slot snapshots (chmod 600)
 ├── sequence.json            # slot order + email/account_id metadata
 ├── state.json               # last switched slot + timestamp
-└── cache/usage.json         # cached rate-limit snapshots
+└── cache/usage.json         # durable per-slot usage records (with resets_at decay)
 ```
 
 `~/.codex/auth.json` is the live file Codex reads. codex-swap only ever swaps that one file in and out.
@@ -241,7 +263,7 @@ Before the first publish runs cleanly:
    - Repository: `codex-swap`
    - Workflow: `publish.yml`
    - Environment: `pypi`
-3. On GitHub → repo *Settings* → *Environments* → confirm `pypi` exists (no secrets needed — the OIDC token handles auth).
+3. On GitHub → repo _Settings_ → _Environments_ → confirm `pypi` exists (no secrets needed — the OIDC token handles auth).
 4. Rerun the failed `Publish to PyPI` job, or push the next version tag.
 
 After that, every `git push` of a `vX.Y.Z` tag publishes automatically.

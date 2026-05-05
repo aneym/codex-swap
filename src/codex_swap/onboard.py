@@ -8,7 +8,7 @@ import sys
 from .auth import current_auth
 from .codex import codex_env, find_real_codex
 from .paths import AUTH_PATH
-from .slots import add_current, load_sequence
+from .slots import add_current, load_sequence, seed_slots
 
 
 def onboard(count: int) -> int:
@@ -50,5 +50,12 @@ def onboard(count: int) -> int:
         print()
 
     seq = load_sequence()
-    print(f"Done. {len(seq['accounts'])} slot(s) configured.")
+    slot_ids = sorted(seq["accounts"], key=lambda s: int(s))
+    print(f"Done. {len(slot_ids)} slot(s) configured.")
+    if len(slot_ids) >= 2:
+        print()
+        print("Seeding usage data for all slots in parallel (one-time, ~50 tokens each)...")
+        results = seed_slots(slot_ids)
+        ok = sum(1 for _, status, _ in results if status == "ok")
+        print(f"Seeded {ok}/{len(results)} slot(s) successfully. Run `codex-swap list` to verify.")
     return 0
