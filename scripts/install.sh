@@ -3,7 +3,7 @@
 #
 # Default behavior:
 #   - use uv when available, otherwise pipx
-#   - try PyPI first, then latest GitHub release, then GitHub main as last resort
+#   - try PyPI first, then the latest GitHub release wheel, then GitHub main as last resort
 #   - do not mutate shell rc files unless --shell-helpers is passed
 
 set -euo pipefail
@@ -127,7 +127,7 @@ release_spec() {
   if [ -z "$tag" ]; then
     return 1
   fi
-  echo "git+${REPO_URL}@${tag}"
+  echo "${REPO_URL}/releases/download/${tag}/codex_swap-${tag#v}-py3-none-any.whl"
 }
 
 install_package() {
@@ -149,7 +149,7 @@ install_package() {
       ;;
     auto)
       if [ "$DRY_RUN" -eq 1 ]; then
-        echo "# auto: try PyPI, then latest GitHub release, then GitHub main"
+        echo "# auto: try PyPI, then latest GitHub release wheel, then GitHub main"
         install_spec "$installer" "$PACKAGE"
         spec="$(release_spec || true)"
         if [ -n "$spec" ]; then

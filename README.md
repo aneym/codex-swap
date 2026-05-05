@@ -41,12 +41,12 @@ uv tool install codex-swap
 pipx install codex-swap
 ```
 
-Until codex-swap is on PyPI, install the latest GitHub release:
+Until codex-swap is on PyPI, install the latest GitHub release wheel:
 
 ```bash
-uv tool install git+https://github.com/aneym/codex-swap@v0.1.1
+uv tool install https://github.com/aneym/codex-swap/releases/download/v0.1.1/codex_swap-0.1.1-py3-none-any.whl
 # or:
-pipx install git+https://github.com/aneym/codex-swap@v0.1.1
+pipx install https://github.com/aneym/codex-swap/releases/download/v0.1.1/codex_swap-0.1.1-py3-none-any.whl
 ```
 
 Make sure `~/.local/bin` is on your `PATH`. If not:

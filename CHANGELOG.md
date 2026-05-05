@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Prefer GitHub release wheel artifacts over `git+...@tag` installs when PyPI is unavailable, keeping bootstrap installs faster and independent of Git.
+
 ## 0.1.1 — 2026-05-05
 
 - Add `import-profile` for saving existing `~/.codex-profiles/*/auth.json` snapshots, including API-key auth profiles identified by non-secret fingerprints.

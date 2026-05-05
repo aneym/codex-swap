@@ -37,7 +37,8 @@ def test_install_script_dry_run_release():
         env=env,
     )
     combined = proc.stdout + proc.stderr
-    assert "git+https://github.com/aneym/codex-swap@v9.8.7" in combined
+    assert "https://github.com/aneym/codex-swap/releases/download/v9.8.7/" in combined
+    assert "codex_swap-9.8.7-py3-none-any.whl" in combined
     assert "tool install" in combined or "pipx install" in combined
 
 
@@ -54,7 +55,8 @@ def test_install_script_dry_run_auto_uses_release_before_main():
     )
     combined = proc.stdout + proc.stderr
     assert "codex-swap" in combined
-    assert "git+https://github.com/aneym/codex-swap@v9.8.7" in combined
+    assert "https://github.com/aneym/codex-swap/releases/download/v9.8.7/" in combined
+    assert "codex_swap-9.8.7-py3-none-any.whl" in combined
     assert "git+https://github.com/aneym/codex-swap" in combined
 
 

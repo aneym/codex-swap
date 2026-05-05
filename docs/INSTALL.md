@@ -25,12 +25,12 @@ pipx install codex-swap
 
 ## GitHub Release
 
-Use this when PyPI is not available yet but you want the latest stable release:
+Use this when PyPI is not available yet but you want the latest stable release without requiring Git:
 
 ```bash
-uv tool install --force git+https://github.com/aneym/codex-swap@v0.1.1
+uv tool install --force https://github.com/aneym/codex-swap/releases/download/v0.1.1/codex_swap-0.1.1-py3-none-any.whl
 # or
-pipx install --force git+https://github.com/aneym/codex-swap@v0.1.1
+pipx install --force https://github.com/aneym/codex-swap/releases/download/v0.1.1/codex_swap-0.1.1-py3-none-any.whl
 ```
 
 The installer can discover the latest release automatically:
