@@ -133,8 +133,19 @@ def test_release_script_help():
     assert "--no-push" in proc.stdout
 
 
+def test_smoke_install_script_help():
+    proc = _run("bash", "scripts/smoke-install.sh", "--help")
+    assert "Smoke-test codex-swap installer routes" in proc.stdout
+    assert "--mode all|uv|pipx|venv" in proc.stdout
+
+
 def test_shell_scripts_have_no_syntax_errors():
-    scripts = ["scripts/install.sh", "scripts/release.sh", "scripts/check-release.sh"]
+    scripts = [
+        "scripts/install.sh",
+        "scripts/release.sh",
+        "scripts/check-release.sh",
+        "scripts/smoke-install.sh",
+    ]
     env = os.environ.copy()
     for script in scripts:
         subprocess.run(["bash", "-n", script], cwd=ROOT, env=env, check=True)

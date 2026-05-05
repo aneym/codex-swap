@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Publish `SHA256SUMS` for GitHub release artifacts and document the checksum route.
 - Keep README install/uninstall snippets aligned with the production installer and purge-before-uninstall flow.
 - Add a private Python venv fallback so the release installer works even when `uv` and `pipx` are not installed.
+- Add a reusable installer smoke test and CI job covering `uv`, `pipx`, and private-venv install backends.
 
 ## 0.1.1 — 2026-05-05
 

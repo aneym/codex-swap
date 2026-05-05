@@ -22,6 +22,8 @@ The script:
 - creates an annotated tag
 - pushes the branch and tag
 
+The CI `install smoke` job also runs `scripts/smoke-install.sh --source release` against isolated `uv`, `pipx`, and private-venv installs so installer regressions are caught on `main`.
+
 ## Main-Only Automation
 
 If a release commit is pushed to `main` without a tag, the successful `CI` run creates the missing tag automatically. This keeps the production route automated even when maintainers only push the release commit.

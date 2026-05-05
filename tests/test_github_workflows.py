@@ -18,6 +18,8 @@ def test_main_push_ci_auto_tags_and_publishes_release():
     assert "branches: [main]" in ci
     assert "actions/checkout@v6" in ci
     assert "actions/checkout@v4" not in ci
+    assert "install smoke" in ci
+    assert "bash scripts/smoke-install.sh --source release" in ci
 
     assert 'workflows: ["CI"]' in tag_release
     assert "branches: [main]" in tag_release

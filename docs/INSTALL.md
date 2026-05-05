@@ -74,6 +74,12 @@ codex-swap verify
 
 `verify` should report `ok` or `rate_limited` for each slot. `broken` means the refresh token needs `codex-swap reconnect`; `error` means the local Codex install/model/config needs attention before auth can be judged.
 
+Maintainers can smoke-test every installer backend with:
+
+```bash
+bash scripts/smoke-install.sh --source release
+```
+
 ## Upgrade
 
 ```bash

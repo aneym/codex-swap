@@ -18,7 +18,7 @@ echo "==> Ruff"
 uv run --extra dev ruff check .
 
 echo "==> Shell syntax"
-bash -n scripts/install.sh scripts/release.sh scripts/check-release.sh
+bash -n scripts/install.sh scripts/release.sh scripts/check-release.sh scripts/smoke-install.sh
 
 echo "==> Build sdist + wheel"
 uv build --clear
