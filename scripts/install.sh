@@ -186,8 +186,17 @@ verify_release_wheel() {
   curl -fLso "$tmp_dir/$wheel_name" "$base_url/$wheel_name" || return 1
   curl -fLso "$tmp_dir/SHA256SUMS" "$base_url/SHA256SUMS" || return 1
 
-  if ! awk -v file="$wheel_name" '$2 == file { print; found=1; exit } END { if (!found) exit 1 }' \
-    "$tmp_dir/SHA256SUMS" > "$tmp_dir/SHA256SUMS.wheel"; then
+  # Older releases (v0.1.2) recorded paths with a leading `dist/` even though
+  # release assets are uploaded flat. Normalize the filename column so
+  # `sha256sum -c` verifies against the file we actually downloaded.
+  if ! awk -v file="$wheel_name" '
+      {
+        name = $2
+        sub(/^dist\//, "", name)
+        if (name == file) { printf("%s  %s\n", $1, name); found=1; exit }
+      }
+      END { if (!found) exit 1 }
+    ' "$tmp_dir/SHA256SUMS" > "$tmp_dir/SHA256SUMS.wheel"; then
     echo "SHA256SUMS does not contain $wheel_name." >&2
     return 1
   fi
