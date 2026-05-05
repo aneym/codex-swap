@@ -11,11 +11,11 @@
 curl -fsSL https://github.com/aneym/codex-swap/releases/latest/download/install.sh | bash
 ```
 
-The installer uses `uv` when available, otherwise `pipx`, otherwise a private Python venv under `~/.local/share/codex-swap/venv`. It tries PyPI first, then the latest GitHub release wheel, then GitHub `main` as a last-resort fallback while the first PyPI release is bootstrapping.
+The installer uses `uv` when available, otherwise `pipx`, otherwise a private Python venv under `~/.local/share/codex-swap/venv`. It tries PyPI first, then the latest GitHub release wheel, then GitHub `main` as a last-resort fallback.
 
 ## Stable Package
 
-After the PyPI release is available:
+Install directly from PyPI with your preferred isolated Python tool manager:
 
 ```bash
 uv tool install codex-swap
@@ -25,12 +25,12 @@ pipx install codex-swap
 
 ## GitHub Release
 
-Use this when PyPI is not available yet but you want the latest stable release without requiring Git:
+Use this when PyPI is unavailable but you want the latest stable release without requiring Git:
 
 ```bash
-uv tool install --force https://github.com/aneym/codex-swap/releases/download/v0.1.1/codex_swap-0.1.1-py3-none-any.whl
+uv tool install --force https://github.com/aneym/codex-swap/releases/download/v0.1.2/codex_swap-0.1.2-py3-none-any.whl
 # or
-pipx install --force https://github.com/aneym/codex-swap/releases/download/v0.1.1/codex_swap-0.1.1-py3-none-any.whl
+pipx install --force https://github.com/aneym/codex-swap/releases/download/v0.1.2/codex_swap-0.1.2-py3-none-any.whl
 ```
 
 The installer can discover the latest release automatically:
@@ -84,7 +84,7 @@ bash scripts/smoke-install.sh --source release
 
 ```bash
 uv tool install --upgrade codex-swap
-# or, before PyPI is live:
+# or, to use the release installer fallback chain:
 curl -fsSL https://github.com/aneym/codex-swap/releases/latest/download/install.sh | bash
 ```
 
