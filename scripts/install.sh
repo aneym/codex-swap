@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+# Production installer for codex-swap.
+#
+# Default behavior:
+#   - use uv when available, otherwise pipx
+#   - try PyPI first, then fall back to GitHub main while PyPI is bootstrapping
+#   - do not mutate shell rc files unless --shell-helpers is passed
+
+set -euo pipefail
+
+PACKAGE="codex-swap"
+GIT_SPEC="git+https://github.com/aneym/codex-swap"
+SOURCE="${CODEX_SWAP_INSTALL_SOURCE:-auto}"
+DRY_RUN=0
+CHECK_PATH=1
+SHELL_HELPERS=0
+
+usage() {
+  cat <<'USAGE'
+Install codex-swap.
+
+Usage:
+  scripts/install.sh [options]
+
+Options:
+  --source auto|pypi|git   Install source. Default: auto.
+  --shell-helpers          Append cx helper functions to ~/.zshrc or ~/.bashrc.
+  --no-path-check          Skip ~/.local/bin PATH warning.
+  --dry-run                Print the chosen install command without running it.
+  -h, --help               Show this help.
+
+Examples:
+  curl -fsSL https://raw.githubusercontent.com/aneym/codex-swap/main/scripts/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/aneym/codex-swap/main/scripts/install.sh | bash -s -- --source git
+  scripts/install.sh --shell-helpers
+USAGE
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --source)
+      SOURCE="${2:-}"
+      shift 2
+      ;;
+    --shell-helpers)
+      SHELL_HELPERS=1
+      shift
+      ;;
+    --no-path-check)
+      CHECK_PATH=0
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+case "$SOURCE" in
+  auto|pypi|git) ;;
+  *)
+    echo "--source must be auto, pypi, or git." >&2
+    exit 2
+    ;;
+esac
+
+run_cmd() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    printf '+'
+    printf ' %q' "$@"
+    printf '\n'
+    return 0
+  fi
+  "$@"
+}
+
+installer_name() {
+  if command -v uv >/dev/null 2>&1; then
+    echo "uv"
+  elif command -v pipx >/dev/null 2>&1; then
+    echo "pipx"
+  else
+    echo "Need uv or pipx to install codex-swap." >&2
+    echo "Install uv:   curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
+    echo "Install pipx: brew install pipx" >&2
+    exit 1
+  fi
+}
+
+install_spec() {
+  local installer="$1"
+  local spec="$2"
+  if [ "$installer" = "uv" ]; then
+    run_cmd uv tool install --force "$spec"
+  else
+    run_cmd pipx install --force "$spec"
+  fi
+}
+
+install_package() {
+  local installer="$1"
+  case "$SOURCE" in
+    pypi)
+      install_spec "$installer" "$PACKAGE"
+      ;;
+    git)
+      install_spec "$installer" "$GIT_SPEC"
+      ;;
+    auto)
+      if [ "$DRY_RUN" -eq 1 ]; then
+        echo "# auto: try PyPI, then GitHub fallback"
+        install_spec "$installer" "$PACKAGE"
+        install_spec "$installer" "$GIT_SPEC"
+      elif ! install_spec "$installer" "$PACKAGE"; then
+        echo "PyPI install failed; falling back to GitHub main." >&2
+        install_spec "$installer" "$GIT_SPEC"
+      fi
+      ;;
+  esac
+}
+
+shell_rc() {
+  case "${SHELL:-}" in
+    */zsh) echo "$HOME/.zshrc" ;;
+    */bash) echo "$HOME/.bashrc" ;;
+    *) echo "$HOME/.profile" ;;
+  esac
+}
+
+append_shell_helpers() {
+  local rc_file="$1"
+  mkdir -p "$(dirname "$rc_file")"
+  touch "$rc_file"
+  if grep -q '>>> codex-swap >>>' "$rc_file"; then
+    echo "Shell helpers already present in $rc_file"
+    return 0
+  fi
+  cat >> "$rc_file" <<'EOF'
+
+# >>> codex-swap >>>
+export PATH="$HOME/.local/bin:$PATH"
+cxraw()       { CODEX_SWAP_SKIP_AUTO=1 command cx "$@"; }
+cxslot()      { CODEX_SWAP_SLOT="$1" command cx "${@:2}"; }
+cxaccounts()  { command codex-swap list "$@"; }
+cxstatus()    { command codex-swap status "$@"; }
+cxverify()    { command codex-swap verify "$@"; }
+cxreconnect() { command codex-swap reconnect "$@"; }
+# <<< codex-swap <<<
+EOF
+  echo "Added codex-swap shell helpers to $rc_file"
+}
+
+warn_if_codex_missing_or_old() {
+  if ! command -v codex >/dev/null 2>&1; then
+    echo "Warning: codex is not on PATH. Install OpenAI Codex CLI before running cx." >&2
+    return 0
+  fi
+  local version
+  version="$(codex --version 2>/dev/null | sed -nE 's/.* ([0-9]+)\.([0-9]+)\.([0-9]+).*/\1 \2 \3/p' | head -1)"
+  if [ -z "$version" ]; then
+    echo "Warning: could not parse codex version from: $(codex --version 2>/dev/null)" >&2
+    return 0
+  fi
+  set -- $version
+  if [ "$1" -eq 0 ] && [ "$2" -lt 122 ]; then
+    echo "Warning: codex $(codex --version) is older than recommended 0.122+." >&2
+  fi
+}
+
+main() {
+  local installer
+  installer="$(installer_name)"
+  echo "Installing codex-swap with $installer (source: $SOURCE)"
+  install_package "$installer"
+
+  if [ "$CHECK_PATH" -eq 1 ]; then
+    case ":$PATH:" in
+      *":$HOME/.local/bin:"*) ;;
+      *)
+        echo "Warning: ~/.local/bin is not on PATH. Add:" >&2
+        echo '  export PATH="$HOME/.local/bin:$PATH"' >&2
+        ;;
+    esac
+  fi
+
+  if [ "$SHELL_HELPERS" -eq 1 ]; then
+    append_shell_helpers "$(shell_rc)"
+  fi
+
+  if [ "$DRY_RUN" -eq 0 ]; then
+    codex-swap --version
+    warn_if_codex_missing_or_old
+    echo "Installed. Next: codex-swap add && codex-swap onboard 2 && codex-swap verify"
+  fi
+}
+
+main

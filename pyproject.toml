@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "codex-swap"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Multi-account switcher for the OpenAI Codex CLI — auto-picks the ChatGPT Pro account with the lowest usage."
 readme = "README.md"
 license = { text = "MIT" }
@@ -34,6 +34,9 @@ cx = "codex_swap.cli:cx_main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/codex_swap"]
+
+[tool.hatch.version]
+path = "src/codex_swap/__init__.py"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

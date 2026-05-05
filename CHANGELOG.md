@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Pick the newest detected Codex binary on `PATH` so stale installs do not shadow newer ones.
 - Harden `verify` so timeout output is decoded safely, non-auth probe failures are not mislabeled as broken refresh tokens, and probes use an explicit lightweight model/prompt.
 - Honor both `CXSWAP_*` and `CODEX_SWAP_*` launcher environment variables.
+- Add a production installer with PyPI/GitHub install routes, shell helpers, dry-run mode, and Codex version warnings.
+- Add a reusable release packaging gate that lint/tests/builds/checks metadata and smoke-installs the wheel.
+- Run package install checks in CI, run the same gate before PyPI publishing, create GitHub release artifacts from tags, and auto-tag new package versions after successful `main` CI.
 
 ## 0.1.0 — initial release
 

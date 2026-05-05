@@ -25,7 +25,13 @@ If you have multiple Codex Pro accounts and you keep hitting the 5-hour cap on w
 
 ## Install
 
-Pick one — both install two commands (`codex-swap` and `cx`) into `~/.local/bin`:
+Recommended — installs two commands (`codex-swap` and `cx`) into `~/.local/bin`, using PyPI when available and falling back to GitHub:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aneym/codex-swap/main/scripts/install.sh | bash
+```
+
+Or pick a package manager directly:
 
 ```bash
 # Recommended (faster, isolated):
@@ -56,6 +62,8 @@ Verify:
 codex-swap --version
 cx --help
 ```
+
+More install, upgrade, and shell-helper options live in [`docs/INSTALL.md`](docs/INSTALL.md).
 
 ## First-time setup
 
@@ -218,7 +226,9 @@ Maintainer flow:
 scripts/release.sh 0.1.1
 ```
 
-The script bumps `pyproject.toml`, promotes `[Unreleased]` into a versioned section, tags `v0.1.1`, and pushes. The `publish.yml` workflow then builds, uploads to PyPI via Trusted Publishing, and creates a GitHub release with the changelog notes attached. No long-lived API tokens involved.
+The script runs the full packaging gate, bumps `src/codex_swap/__init__.py`, promotes `[Unreleased]` into a versioned section, tags `v0.1.1`, and pushes. A successful `main` CI run also auto-creates a missing version tag, so release publication stays automated even when maintainers only push the release commit. The `publish.yml` workflow builds, checks, uploads to PyPI via Trusted Publishing, and creates a GitHub release with the changelog notes attached. No long-lived API tokens involved.
+
+See [`docs/RELEASE.md`](docs/RELEASE.md) for the exact automation path.
 
 ### One-time PyPI Trusted Publisher setup
 

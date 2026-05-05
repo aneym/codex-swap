@@ -39,3 +39,21 @@ jobs:
           uv run codex-swap --version
           uv run codex-swap --help > /dev/null
           uv run cx --help > /dev/null || true   # cx forwards to codex which isn't installed in CI
+
+  package:
+    name: package smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Release packaging gate
+        run: bash scripts/check-release.sh

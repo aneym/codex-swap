@@ -1,0 +1,66 @@
+name: Tag release from main
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    branches: [main]
+    types: [completed]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    name: create missing version tag
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Read package version
+        id: version
+        shell: bash
+        run: |
+          version="$(python -c 'import re, pathlib; text = pathlib.Path("src/codex_swap/__init__.py").read_text(); match = re.search(r"^__version__ = \"([^\"]+)\"", text, re.M); print(match.group(1) if match else "")')"
+          if [ -z "$version" ]; then
+            echo "Could not find __version__." >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check changelog section
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          if ! grep -Eq "^## ${version}( |$)" CHANGELOG.md; then
+            echo "CHANGELOG.md must contain a section for ${version} before auto-tagging." >&2
+            exit 1
+          fi
+
+      - name: Check whether tag already exists
+        id: tag
+        shell: bash
+        run: |
+          tag="${{ steps.version.outputs.tag }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "${tag} already exists; nothing to do."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and push tag
+        if: steps.tag.outputs.exists == 'false'
+        shell: bash
+        run: |
+          tag="${{ steps.version.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" "${{ github.event.workflow_run.head_sha }}" -m "Release ${{ steps.version.outputs.version }}"
+          git push origin "$tag"
