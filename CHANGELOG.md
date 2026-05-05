@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## 0.1.3 — 2026-05-05
+
+- Make the per-slot usage store durable: rollout scans now merge new findings into the persisted cache instead of overwriting it, so a slot's record is kept until something fresher replaces it.
+- Apply `resets_at`-based decay to `used_percent` so the picker, `list`, and `usage` reflect window resets without needing a fresh probe.
+- Fix the picker so a known-near-cap slot (≥ 80% on either window) ranks below an unmeasured slot — auto-rotation no longer gets stuck on a 90% slot just because the alternatives have no rollout history.
+- Add `codex-swap seed [targets...]` to populate usage data in parallel via per-probe isolated `CODEX_HOME`s; defaults to slots with no record, `--all` re-seeds everything, `--concurrency` and `--timeout` configurable.
+- Auto-seed at the end of `codex-swap onboard` so freshly onboarded accounts have usage data immediately.
+- `codex-swap remove` now drops the slot's persisted usage record so re-adding at the same slot number cannot inherit prior data.
+- `codex-swap list` and `codex-swap usage` render decayed effective percents and tag each row with its source (`rollout` or `probe`).
+- The launcher no longer auto-probes on every `cx` launch; it does a cheap rollout-scan + merge, then prints a one-line tip pointing at `codex-swap seed` if any slot is still unmeasured.
+
 ## 0.1.2 — 2026-05-05
 
 - Prefer GitHub release wheel artifacts over `git+...@tag` installs when PyPI is unavailable, keeping bootstrap installs faster and independent of Git.

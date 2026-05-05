@@ -20,12 +20,14 @@ from .slots import (
     reauth,
     reconnect_broken,
     remove,
+    resolve_slot,
     rotate,
+    seed_slots,
     stash_active,
     switch_to,
     verify_all,
 )
-from .usage import refresh_cache
+from .usage import effective_used_percent, load_persisted, refresh_from_rollouts
 
 
 def _fmt_pct(v) -> str:
@@ -82,22 +84,20 @@ def cmd_list(args) -> int:
     if not seq["accounts"]:
         print("No accounts configured. Run `codex-swap onboard 3` to set them up.")
         return 0
-    usage = {}
-    if not args.no_usage:
-        usage = refresh_cache().get("data", {})
+    usage = {} if args.no_usage else refresh_from_rollouts()
     active = current_slot(seq)
     print(f"{'':2} {'slot':<5} {'email':<35} {'plan':<8} {'5h':>6} {'7d':>6} {'resets':>10}")
     for slot in sorted(seq["accounts"], key=lambda s: int(s)):
         acc = seq["accounts"][slot]
         marker = "*" if slot == active else " "
         info = usage.get(slot, {}) if isinstance(usage, dict) else {}
-        primary = info.get("primary") if isinstance(info.get("primary"), dict) else {}
-        secondary = info.get("secondary") if isinstance(info.get("secondary"), dict) else {}
+        primary = info.get("primary") if isinstance(info.get("primary"), dict) else None
+        secondary = info.get("secondary") if isinstance(info.get("secondary"), dict) else None
         print(
             f" {marker} {slot:<5} {_account_label(acc)[:34]:<35} "
             f"{(acc.get('plan_type') or '')[:7]:<8} "
-            f"{_fmt_pct(primary.get('used_percent') if primary else None):>6} "
-            f"{_fmt_pct(secondary.get('used_percent') if secondary else None):>6} "
+            f"{_fmt_pct(effective_used_percent(primary)):>6} "
+            f"{_fmt_pct(effective_used_percent(secondary)):>6} "
             f"{_fmt_resets(primary.get('resets_at') if primary else None):>10}"
         )
     return 0
@@ -202,23 +202,59 @@ def cmd_verify(args) -> int:
 
 
 def cmd_usage(args) -> int:
-    payload = refresh_cache()
+    data = refresh_from_rollouts()
     if args.json:
         import json as _json
-        print(_json.dumps(payload, indent=2))
-    else:
-        data = payload.get("data", {})
-        if not data:
-            print("(no usage data — slots haven't been used yet, or rollouts not found)")
-        for slot, info in sorted(data.items(), key=lambda kv: int(kv[0])):
-            primary = info.get("primary") or {}
-            secondary = info.get("secondary") or {}
-            print(
-                f"slot {slot}: 5h={_fmt_pct(primary.get('used_percent'))} "
-                f"7d={_fmt_pct(secondary.get('used_percent'))} "
-                f"plan={info.get('plan_type') or '—'}"
-            )
+        print(_json.dumps({"timestamp": time.time(), "data": data}, indent=2))
+        return 0
+    if not data:
+        print("(no usage data yet — run `codex-swap seed` to populate)")
+        return 0
+    for slot, info in sorted(data.items(), key=lambda kv: int(kv[0])):
+        primary = info.get("primary") if isinstance(info.get("primary"), dict) else None
+        secondary = info.get("secondary") if isinstance(info.get("secondary"), dict) else None
+        source = info.get("source") or "?"
+        print(
+            f"slot {slot}: 5h={_fmt_pct(effective_used_percent(primary))} "
+            f"7d={_fmt_pct(effective_used_percent(secondary))} "
+            f"plan={info.get('plan_type') or '—'} (via {source})"
+        )
     return 0
+
+
+def cmd_seed(args) -> int:
+    seq = load_sequence()
+    if not seq["accounts"]:
+        print("No slots configured. Run `codex-swap onboard 3` first.")
+        return 1
+    if args.targets:
+        slots = []
+        for t in args.targets:
+            slot = resolve_slot(seq, t)
+            if not slot:
+                sys.stderr.write(f"codex-swap: unknown slot '{t}'\n")
+                return 1
+            slots.append(slot)
+    elif args.all:
+        slots = sorted(seq["accounts"], key=int)
+    else:
+        persisted = load_persisted()
+        slots = sorted([s for s in seq["accounts"] if s not in persisted], key=int)
+        if not slots:
+            print("All slots already have usage data. Pass slot numbers or --all to re-seed.")
+            return 0
+
+    results = seed_slots(slots, max_concurrency=args.concurrency, probe_timeout=args.timeout)
+    if not results:
+        print("(nothing to seed)")
+        return 0
+    print()
+    print(f"{'slot':<5} {'email':<32} {'status':<14} detail")
+    for slot, status, detail in results:
+        email = (seq["accounts"].get(slot, {}).get("email") or "")[:31]
+        print(f"{slot:<5} {email:<32} {status:<14} {detail[:80]}")
+    failures = [r for r in results if r[1] not in ("ok",)]
+    return 1 if failures else 0
 
 
 def cmd_launch(args) -> int:
@@ -293,6 +329,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp_usage = sub.add_parser("usage", help="Refresh the usage cache and print")
     sp_usage.add_argument("--json", action="store_true")
     sp_usage.set_defaults(func=cmd_usage)
+
+    sp_seed = sub.add_parser(
+        "seed",
+        help="Probe slots in parallel to populate usage data (defaults to slots with no record)",
+    )
+    sp_seed.add_argument("targets", nargs="*", help="slot numbers / emails (default: only slots without data)")
+    sp_seed.add_argument("--all", action="store_true", help="Re-seed every slot, even those with data")
+    sp_seed.add_argument("--concurrency", type=int, default=4, help="Max parallel probes (default: 4)")
+    sp_seed.add_argument("--timeout", type=float, default=30.0, help="Per-probe timeout in seconds (default: 30)")
+    sp_seed.set_defaults(func=cmd_seed)
 
     sp_launch = sub.add_parser("launch", help="Pick lowest-usage slot and exec codex")
     sp_launch.add_argument("--slot", help="Pin a specific slot")

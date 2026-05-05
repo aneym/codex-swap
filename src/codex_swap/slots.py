@@ -1,10 +1,13 @@
-"""Slot CRUD: add, remove, list, switch, reauth."""
+"""Slot CRUD: add, remove, list, switch, reauth, seed."""
 
 from __future__ import annotations
 
+import concurrent.futures
 import os
 import shutil
 import subprocess
+import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -170,6 +173,11 @@ def remove(target: str) -> tuple[int, str]:
     slot_dir = ACCOUNTS_DIR / slot
     if slot_dir.exists():
         shutil.rmtree(slot_dir)
+    # Drop the persisted usage record so a future re-add at this slot number
+    # doesn't inherit the previous account's data.
+    from .usage import drop_slot_record
+
+    drop_slot_record(slot)
     return 0, f"Removed slot {slot}."
 
 
@@ -375,6 +383,183 @@ def _line_with(text: str, phrase: str) -> str:
     return phrase
 
 
+def _probe_slot_isolated(
+    slot: str,
+    snapshot_path: Path,
+    real_codex: str,
+    timeout: float = 30.0,
+) -> tuple[str, str, str, dict | None]:
+    """Probe one slot using its own temporary CODEX_HOME (parallel-safe).
+
+    Each probe gets a private temp dir as CODEX_HOME so multiple probes can
+    run concurrently without fighting over `~/.codex/auth.json` or stepping
+    on the user's active session. The probe:
+
+    1. Copies the slot's snapshot auth.json into the temp CODEX_HOME.
+    2. Runs `codex exec` against it (small prompt, ~50 tokens).
+    3. Reads rate_limits from the rollout codex wrote inside the temp dir.
+    4. Copies the (now-refreshed) auth.json back to the slot snapshot, so
+       any rotated refresh_token is preserved for next time.
+    5. Cleans up the temp dir.
+
+    Returns (slot, status, detail, record_or_none). Status is one of
+    'ok' / 'rate_limited' / 'broken' / 'error' / 'switch_failed'. Record is
+    the unified usage shape ({primary, secondary, plan_type, scanned_at,
+    source, source_path}) when rate_limits were captured, else None.
+    """
+    if not snapshot_path.exists():
+        return slot, "switch_failed", f"no snapshot at {snapshot_path}", None
+
+    from .usage import latest_rate_limits  # avoid circular import at module load
+
+    tmp_root = Path(tempfile.mkdtemp(prefix=f"codex-swap-probe-{slot}-"))
+    try:
+        try:
+            os.chmod(tmp_root, 0o700)
+        except OSError:
+            pass
+        tmp_auth = tmp_root / "auth.json"
+        shutil.copy2(snapshot_path, tmp_auth)
+        os.chmod(tmp_auth, 0o600)
+
+        env = codex_env()
+        env["CODEX_HOME"] = str(tmp_root)
+
+        verify_model = os.environ.get("CODEX_SWAP_VERIFY_MODEL", "gpt-5.4-mini")
+        cmd = [
+            real_codex,
+            "exec",
+            "--skip-git-repo-check",
+            "--ignore-user-config",
+            "--sandbox",
+            "read-only",
+        ]
+        if verify_model:
+            cmd.extend(["-m", verify_model])
+        cmd.append("Reply exactly ok and do not use tools.")
+
+        try:
+            proc = subprocess.run(
+                cmd,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                stdin=subprocess.DEVNULL,
+            )
+            combined = _as_text(proc.stdout) + "\n" + _as_text(proc.stderr)
+            rc = proc.returncode
+        except subprocess.TimeoutExpired as exc:
+            combined = _as_text(exc.stdout) + "\n" + _as_text(exc.stderr)
+            rc = None  # streaming; rate_limits may still be in the rollout
+
+        bad = _looks_broken(combined)
+        if bad:
+            return slot, "broken", _line_with(combined, bad), None
+        if any(p in combined for p in _RATE_LIMIT_PHRASES):
+            return slot, "rate_limited", _line_with(combined, _first_match(combined, _RATE_LIMIT_PHRASES)), None
+
+        # Capture any rotated refresh_token before we tear down the temp dir.
+        if tmp_auth.exists():
+            shutil.copy2(tmp_auth, snapshot_path)
+            os.chmod(snapshot_path, 0o600)
+
+        # Pull rate_limits out of the rollout codex wrote inside our temp dir.
+        record: dict | None = None
+        sessions_root = tmp_root / "sessions"
+        rollout_path: Path | None = None
+        if sessions_root.exists():
+            rollouts = list(sessions_root.rglob("rollout-*.jsonl"))
+            if rollouts:
+                rollouts.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+                rollout_path = rollouts[0]
+                rl = latest_rate_limits(rollout_path)
+                if isinstance(rl, dict):
+                    record = {
+                        "primary": rl.get("primary"),
+                        "secondary": rl.get("secondary"),
+                        "plan_type": rl.get("plan_type"),
+                        "scanned_at": time.time(),
+                        "source": "probe",
+                        "source_path": str(rollout_path),
+                    }
+
+        if rc == 0:
+            detail = "auth ok" if record else "auth ok (no rate_limits in rollout)"
+            return slot, "ok", detail, record
+        if rc is None:
+            detail = (
+                "auth ok (response was streaming when timeout fired)"
+                if record
+                else "timed out without capturing rate_limits"
+            )
+            return slot, "ok", detail, record
+        last_err = ""
+        for line in reversed(combined.splitlines()):
+            if line.strip():
+                last_err = line.strip()
+                break
+        return slot, "error", f"probe exited {rc}: {last_err[:120]}", record
+    finally:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+
+
+def seed_slots(
+    slots: list[str],
+    max_concurrency: int = 4,
+    probe_timeout: float = 30.0,
+) -> list[tuple[str, str, str]]:
+    """Probe slots in parallel via isolated CODEX_HOMEs and persist the results.
+
+    Captured rate_limits are merged into the persisted usage store (per-slot,
+    higher `scanned_at` wins). The user's live `~/.codex/auth.json` is never
+    touched, so concurrent codex sessions are unaffected.
+
+    Returns [(slot, status, detail), ...] sorted by slot.
+    """
+    if not slots:
+        return []
+    seq = load_sequence()
+    accounts = seq.get("accounts", {})
+    targets = sorted({str(s) for s in slots if str(s) in accounts}, key=int)
+    if not targets:
+        return []
+
+    from .usage import merge_into_persisted
+
+    real = find_real_codex()
+    workers = max(1, min(len(targets), max_concurrency))
+    sys.stderr.write(
+        f"codex-swap: probing {len(targets)} slot(s) in parallel "
+        f"(concurrency={workers}, timeout={probe_timeout:.0f}s)\n"
+    )
+
+    results: list[tuple[str, str, str]] = []
+    seeds: dict[str, dict] = {}
+    futures_map: dict = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        for slot in targets:
+            snapshot = ACCOUNTS_DIR / slot / "auth.json"
+            future = pool.submit(_probe_slot_isolated, slot, snapshot, real, probe_timeout)
+            futures_map[future] = slot
+        for future in concurrent.futures.as_completed(futures_map):
+            slot = futures_map[future]
+            try:
+                slot, status, detail, record = future.result()
+            except Exception as exc:  # noqa: BLE001 — surface anything from the probe
+                status, detail, record = "error", f"probe raised: {exc!r}"[:200], None
+            sys.stderr.write(f"codex-swap: slot {slot}: {status} — {detail[:100]}\n")
+            results.append((slot, status, detail))
+            if isinstance(record, dict):
+                seeds[slot] = record
+
+    if seeds:
+        merge_into_persisted(seeds)
+
+    results.sort(key=lambda r: int(r[0]))
+    return results
+
+
 def verify_all() -> list[tuple[str, str, str]]:
     """Switch into each slot, exercise auth with a real call, report status.
 
@@ -446,3 +631,8 @@ def _resolve(seq: dict, target: str) -> str | None:
         ):
             return str(slot)
     return None
+
+
+def resolve_slot(seq: dict, target: str) -> str | None:
+    """Public alias for _resolve — accepts slot id, email, account_id, etc."""
+    return _resolve(seq, target)
