@@ -202,8 +202,8 @@ ChatGPT issues single-use refresh tokens that rotate on every successful refresh
 ## Uninstall
 
 ```bash
-uv tool uninstall codex-swap        # or: pipx uninstall codex-swap
 codex-swap purge --yes              # before uninstall, removes ~/.codex-swap
+uv tool uninstall codex-swap        # or: pipx uninstall codex-swap
 ```
 
 ## Development
