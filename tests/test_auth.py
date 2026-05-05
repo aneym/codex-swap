@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 
-from codex_swap.auth import auth_identity, decode_jwt_payload
+from codex_swap.auth import auth_fingerprint, auth_identity, decode_jwt_payload
 
 
 def _make_jwt(payload: dict) -> str:
@@ -50,3 +50,20 @@ def test_auth_identity_handles_missing_fields():
     assert auth_identity({}) == ("", "", "")
     assert auth_identity({"tokens": {}}) == ("", "", "")
     assert auth_identity({"tokens": {"account_id": "x"}}) == ("", "x", "")
+
+
+def test_auth_fingerprint_prefers_account_id():
+    auth = {
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": "sk-ignored",
+        "tokens": {"account_id": "acc-123"},
+    }
+    assert auth_fingerprint(auth) == "chatgpt:acc-123"
+
+
+def test_auth_fingerprint_hashes_api_key_without_exposing_secret():
+    auth = {"auth_mode": "apikey", "OPENAI_API_KEY": "sk-secret"}
+    fingerprint = auth_fingerprint(auth)
+    assert fingerprint.startswith("apikey:")
+    assert "sk-secret" not in fingerprint
+    assert auth_fingerprint(auth) == fingerprint

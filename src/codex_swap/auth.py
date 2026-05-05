@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -57,6 +58,23 @@ def auth_identity(auth: dict) -> tuple[str, str, str]:
         if isinstance(chatgpt, dict):
             plan_type = chatgpt.get("chatgpt_plan_type", "") or ""
     return email, account_id, plan_type
+
+
+def auth_fingerprint(auth: dict) -> str:
+    """Return a stable, non-secret identifier for auth blobs without account_id."""
+    if not isinstance(auth, dict):
+        return ""
+    tokens = auth.get("tokens", {}) or {}
+    account_id = tokens.get("account_id", "") or ""
+    if account_id:
+        return f"chatgpt:{account_id}"
+
+    api_key = auth.get("OPENAI_API_KEY", "") or ""
+    if isinstance(api_key, str) and api_key:
+        digest = hashlib.sha256(api_key.encode()).hexdigest()[:24]
+        return f"apikey:{digest}"
+
+    return ""
 
 
 def current_auth() -> dict | None:

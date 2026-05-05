@@ -72,7 +72,16 @@ codex-swap onboard 2
 codex-swap verify
 ```
 
-Output of `verify` should be all `ok` (or `rate_limited` if a window is currently capped — that's fine, auth is still healthy).
+Output of `verify` should be all `ok` (or `rate_limited` if a window is currently capped — that's fine, auth is still healthy). If a row says `error`, the probe failed for a local Codex/model/config reason rather than a dead refresh token.
+
+If you already have Codex profile directories, import them instead of logging in again:
+
+```bash
+codex-swap import-profile personal
+codex-swap import-profile work --label work
+```
+
+`import-profile` accepts a profile name under `~/.codex-profiles`, a profile directory, or an `auth.json` path. It supports both ChatGPT OAuth profiles and API-key profiles; API-key profiles do not expose 5-hour/7-day ChatGPT usage telemetry, so they show as unknown usage and are best pinned explicitly when needed.
 
 ## Daily use
 
@@ -105,6 +114,7 @@ codex-swap reauth 1     # opens browser, log in to that slot's account
 |---------|--------------|
 | `cx` | Auto-pick lowest-usage slot and exec codex (this is what you'll use) |
 | `codex-swap add` | Save the currently logged-in account as a new slot |
+| `codex-swap import-profile <profile>` | Save an existing `~/.codex-profiles/<profile>/auth.json` or auth file as a slot |
 | `codex-swap remove <slot>` | Remove a slot |
 | `codex-swap list` | Show all slots with usage % |
 | `codex-swap status` | Show which slot is active right now |
@@ -125,6 +135,8 @@ codex-swap reauth 1     # opens browser, log in to that slot's account
 CXSWAP_SLOT=2 cx       # force a specific slot for this run
 CXSWAP_SKIP_AUTO=1 cx  # skip auto-pick (use whatever's currently in auth.json)
 ```
+
+The explicit names `CODEX_SWAP_SLOT` and `CODEX_SWAP_SKIP_AUTO` work too.
 
 ## Optional shell aliases
 
@@ -175,8 +187,8 @@ ChatGPT issues single-use refresh tokens that rotate on every successful refresh
 
 ## Caveats
 
-- macOS only right now. The "real codex" resolver also strips Superset's bash wrapper from `PATH`.
-- Requires `codex` v0.122 or newer (the rollout schema with `rate_limits.primary/secondary` was added around that time).
+- macOS only right now.
+- Requires `codex` v0.122 or newer (the rollout schema with `rate_limits.primary/secondary` was added around that time). If multiple Codex installs exist on `PATH`, codex-swap chooses the newest detected binary.
 - `OPENAI_API_KEY` in your environment will override `auth.json`. codex-swap unsets it when running `codex login` so the OAuth path wins; if you want `cx` to do the same for the launched session, wrap it: `alias cx='env -u OPENAI_API_KEY codex-swap launch'`.
 
 ## Uninstall

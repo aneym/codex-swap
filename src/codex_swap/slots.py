@@ -6,9 +6,11 @@ import os
 import shutil
 import subprocess
 import time
+from pathlib import Path
 
 from .auth import (
     atomic_write_json,
+    auth_fingerprint,
     auth_identity,
     current_auth,
     read_json,
@@ -50,13 +52,28 @@ def slot_for_account_id(seq: dict, account_id: str) -> str | None:
     return None
 
 
+def slot_for_auth(seq: dict, auth: dict) -> str | None:
+    if not auth:
+        return None
+    _, account_id, _ = auth_identity(auth)
+    slot = slot_for_account_id(seq, account_id)
+    if slot:
+        return slot
+    fingerprint = auth_fingerprint(auth)
+    if not fingerprint:
+        return None
+    for slot, acc in seq.get("accounts", {}).items():
+        if acc.get("auth_fingerprint") == fingerprint:
+            return str(slot)
+    return None
+
+
 def current_slot(seq: dict | None = None) -> str | None:
     seq = seq or load_sequence()
     auth = current_auth()
     if not auth:
         return None
-    _, account_id, _ = auth_identity(auth)
-    return slot_for_account_id(seq, account_id)
+    return slot_for_auth(seq, auth)
 
 
 def next_free_slot(seq: dict) -> str:
@@ -77,8 +94,7 @@ def stash_active(seq: dict) -> None:
     auth = current_auth()
     if not auth:
         return
-    _, account_id, _ = auth_identity(auth)
-    slot = slot_for_account_id(seq, account_id)
+    slot = slot_for_auth(seq, auth)
     if not slot:
         return
     target = ACCOUNTS_DIR / slot / "auth.json"
@@ -89,38 +105,58 @@ def stash_active(seq: dict) -> None:
 
 def add_current() -> tuple[int, str]:
     """Snapshot the live login as a new slot. Returns (rc, message)."""
-    auth = current_auth()
+    return add_auth_file(AUTH_PATH, mark_active=True)
+
+
+def add_auth_file(
+    auth_path: Path,
+    *,
+    mark_active: bool = False,
+    source_label: str = "",
+) -> tuple[int, str]:
+    """Snapshot an auth.json file as a new slot. Returns (rc, message)."""
+    auth_path = Path(auth_path).expanduser()
+    auth = read_json(auth_path)
+    path_label = str(auth_path)
     if not auth:
-        return 1, f"No auth.json at {AUTH_PATH}. Run `codex login` first."
+        return 1, f"No auth.json at {path_label}. Run `codex login` first."
     email, account_id, plan_type = auth_identity(auth)
-    if not account_id:
-        return 1, "auth.json has no account_id. Is this a ChatGPT (OAuth) login?"
+    fingerprint = auth_fingerprint(auth)
+    if not (account_id or fingerprint):
+        return 1, "auth.json has no recognizable Codex account identity."
 
     seq = load_sequence()
-    existing = slot_for_account_id(seq, account_id)
+    existing = slot_for_auth(seq, auth)
     if existing:
-        return 1, f"Account {email or account_id} already saved as slot {existing}."
+        label = email or source_label or account_id or fingerprint
+        return 1, f"Account {label} already saved as slot {existing}."
 
     slot = next_free_slot(seq)
     target = ACCOUNTS_DIR / slot / "auth.json"
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(AUTH_PATH, target)
+    shutil.copy2(auth_path, target)
     os.chmod(target, 0o600)
 
     seq["accounts"][slot] = {
         "email": email,
         "account_id": account_id,
+        "auth_fingerprint": fingerprint,
+        "auth_mode": auth.get("auth_mode", ""),
         "plan_type": plan_type,
+        "label": source_label,
         "added_at": time.time(),
     }
     seq["sequence"] = sorted(set(seq["sequence"] + [slot]), key=int)
     save_sequence(seq)
 
-    state = load_state()
-    state["active_slot"] = slot
-    state["last_switched_at"] = time.time()
-    save_state(state)
-    return 0, f"Added slot {slot}: {email or '(no email)'} ({plan_type or 'unknown plan'})"
+    if mark_active:
+        state = load_state()
+        state["active_slot"] = slot
+        state["last_switched_at"] = time.time()
+        save_state(state)
+    mode = auth.get("auth_mode", "") or "unknown auth"
+    label = email or source_label or account_id or fingerprint
+    return 0, f"Added slot {slot}: {label} ({plan_type or mode})"
 
 
 def remove(target: str) -> tuple[int, str]:
@@ -200,8 +236,8 @@ def reauth(target: str) -> tuple[int, str]:
     if expected_email and new_email and new_email != expected_email:
         return 2, (
             f"Email mismatch: expected {expected_email}, got {new_email}.\n"
-            f"Slot {slot}'s snapshot left untouched. Use --switch-to {slot} to roll back, "
-            "or --add-account to register the new email as a separate slot."
+            f"Slot {slot}'s snapshot left untouched. Run `codex-swap switch {slot}` to roll back, "
+            "or `codex-swap add` to register the new email as a separate slot."
         )
 
     target_path = ACCOUNTS_DIR / slot / "auth.json"
@@ -273,19 +309,31 @@ def _probe_slot(real_codex: str, timeout: float = 10.0) -> tuple[str, str]:
     A timeout without a known-bad phrase means codex is happily streaming
     a response and basic auth is fine.
     """
+    verify_model = os.environ.get("CODEX_SWAP_VERIFY_MODEL", "gpt-5.4-mini")
+    cmd = [
+        real_codex,
+        "exec",
+        "--skip-git-repo-check",
+        "--ephemeral",
+        "--sandbox",
+        "read-only",
+    ]
+    if verify_model:
+        cmd.extend(["-m", verify_model])
+    cmd.append("Reply exactly ok and do not use tools.")
     try:
         proc = subprocess.run(
-            [real_codex, "exec", "ok", "--skip-git-repo-check"],
+            cmd,
             env=codex_env(),
             capture_output=True,
             text=True,
             timeout=timeout,
             stdin=subprocess.DEVNULL,
         )
-        combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        combined = _as_text(proc.stdout) + "\n" + _as_text(proc.stderr)
         rc = proc.returncode
     except subprocess.TimeoutExpired as exc:
-        combined = (exc.stdout or "") + "\n" + (exc.stderr or "")
+        combined = _as_text(exc.stdout) + "\n" + _as_text(exc.stderr)
         rc = None  # streaming, no exit yet
 
     bad = _looks_broken(combined)
@@ -302,7 +350,15 @@ def _probe_slot(real_codex: str, timeout: float = 10.0) -> tuple[str, str]:
         if line.strip():
             last_err = line.strip()
             break
-    return "broken", f"non-zero exit ({rc}): {last_err[:120]}"
+    return "error", f"probe exited {rc}: {last_err[:120]}"
+
+
+def _as_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return str(value)
 
 
 def _first_match(text: str, phrases) -> str:
@@ -322,7 +378,8 @@ def _line_with(text: str, phrase: str) -> str:
 def verify_all() -> list[tuple[str, str, str]]:
     """Switch into each slot, exercise auth with a real call, report status.
 
-    Returns [(slot, status, detail), ...]. Status is 'ok' or 'broken'.
+    Returns [(slot, status, detail), ...]. Status is 'ok', 'rate_limited',
+    'broken', or 'error'.
     Restores the active slot afterwards. Each successful probe also captures
     any rotated tokens via stash_active so snapshots stay current.
     """
@@ -380,6 +437,12 @@ def reconnect_broken() -> tuple[int, list[str], list[str]]:
 def _resolve(seq: dict, target: str) -> str | None:
     target = str(target)
     for slot, acc in seq["accounts"].items():
-        if str(slot) == target or acc.get("email") == target or acc.get("account_id") == target:
+        if (
+            str(slot) == target
+            or acc.get("email") == target
+            or acc.get("account_id") == target
+            or acc.get("auth_fingerprint") == target
+            or acc.get("label") == target
+        ):
             return str(slot)
     return None

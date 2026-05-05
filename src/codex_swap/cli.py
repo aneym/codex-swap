@@ -5,13 +5,15 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from pathlib import Path
 
 from . import __version__
-from .auth import auth_identity, current_auth
+from .auth import auth_fingerprint, auth_identity, current_auth
 from .launcher import launch
 from .onboard import onboard
 from .paths import AUTH_PATH
 from .slots import (
+    add_auth_file,
     add_current,
     current_slot,
     load_sequence,
@@ -47,8 +49,24 @@ def _fmt_resets(ts) -> str:
     return f"in {delta // 86400}d"
 
 
+def _account_label(acc: dict) -> str:
+    return acc.get("email") or acc.get("label") or acc.get("account_id") or acc.get("auth_mode") or ""
+
+
 def cmd_add(args) -> int:
     rc, msg = add_current()
+    print(msg)
+    return rc
+
+
+def cmd_import_profile(args) -> int:
+    src = Path(args.profile).expanduser()
+    label = args.label or src.name
+    if not src.is_absolute() and "/" not in args.profile:
+        src = Path.home() / ".codex-profiles" / args.profile
+    if src.is_dir():
+        src = src / "auth.json"
+    rc, msg = add_auth_file(src, source_label=label)
     print(msg)
     return rc
 
@@ -76,7 +94,7 @@ def cmd_list(args) -> int:
         primary = info.get("primary") if isinstance(info.get("primary"), dict) else {}
         secondary = info.get("secondary") if isinstance(info.get("secondary"), dict) else {}
         print(
-            f" {marker} {slot:<5} {(acc.get('email') or '')[:34]:<35} "
+            f" {marker} {slot:<5} {_account_label(acc)[:34]:<35} "
             f"{(acc.get('plan_type') or '')[:7]:<8} "
             f"{_fmt_pct(primary.get('used_percent') if primary else None):>6} "
             f"{_fmt_pct(secondary.get('used_percent') if secondary else None):>6} "
@@ -91,12 +109,16 @@ def cmd_status(args) -> int:
         print(f"No auth.json at {AUTH_PATH} (logged out).")
         return 0
     email, account_id, plan_type = auth_identity(auth)
+    fingerprint = auth_fingerprint(auth)
     seq = load_sequence()
     slot = current_slot(seq)
     if slot:
-        print(f"Active: slot {slot} — {email} ({plan_type})")
+        acc = seq["accounts"].get(slot, {})
+        print(f"Active: slot {slot} — {_account_label(acc)} ({plan_type or acc.get('auth_mode') or 'unknown'})")
     else:
-        print(f"Active: unmanaged — {email} ({plan_type}), account_id={account_id[:12]}…")
+        label = email or auth.get("auth_mode", "") or fingerprint
+        suffix = f", account_id={account_id[:12]}…" if account_id else ""
+        print(f"Active: unmanaged — {label} ({plan_type or auth.get('auth_mode', 'unknown')}){suffix}")
     return 0
 
 
@@ -146,11 +168,14 @@ def cmd_verify(args) -> int:
     print(f"{'slot':<5} {'email':<32} {'status':<14}  detail")
     broken = []
     rate_limited = []
+    errors = []
     for slot, status, detail in results:
         if status == "broken":
             broken.append(slot)
         elif status == "rate_limited":
             rate_limited.append(slot)
+        elif status == "error":
+            errors.append(slot)
         email = (seq["accounts"].get(slot, {}).get("email") or "")[:31]
         print(f"{slot:<5} {email:<32} {status:<14}  {detail[:80]}")
     notes = []
@@ -164,11 +189,16 @@ def cmd_verify(args) -> int:
             f"{len(rate_limited)} slot(s) hit their usage cap — auth is fine, "
             f"they'll auto-refresh when the window resets."
         )
+    if errors:
+        notes.append(
+            f"{len(errors)} slot probe(s) failed for a non-auth reason. "
+            "Auth was not marked broken; inspect the detail above."
+        )
     if notes:
         print()
         for n in notes:
             print(n)
-    return 1 if broken else 0
+    return 1 if broken or errors else 0
 
 
 def cmd_usage(args) -> int:
@@ -220,6 +250,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp_add = sub.add_parser("add", help="Save the currently logged-in account as a new slot")
     sp_add.set_defaults(func=cmd_add)
 
+    sp_import = sub.add_parser("import-profile", help="Save an existing Codex profile/auth.json as a slot")
+    sp_import.add_argument("profile", help="profile name under ~/.codex-profiles, profile dir, or auth.json path")
+    sp_import.add_argument("--label", help="display label for API-key or no-email auth")
+    sp_import.set_defaults(func=cmd_import_profile)
+
     sp_rm = sub.add_parser("remove", help="Remove a slot")
     sp_rm.add_argument("target", help="slot number, email, or account_id")
     sp_rm.set_defaults(func=cmd_remove)
@@ -252,7 +287,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp_onboard.add_argument("count", type=int, nargs="?", default=3)
     sp_onboard.set_defaults(func=cmd_onboard)
 
-    sp_verify = sub.add_parser("verify", help="Test every slot's token by running 'codex login status'")
+    sp_verify = sub.add_parser("verify", help="Test every slot's token by running a small codex exec probe")
     sp_verify.set_defaults(func=cmd_verify)
 
     sp_usage = sub.add_parser("usage", help="Refresh the usage cache and print")
@@ -299,10 +334,12 @@ def cx_main(argv: list[str] | None = None) -> int:
             continue
         forwarded.append(a)
         i += 1
-    # Env knobs override CLI flags.
-    if "CODEX_SWAP_SKIP_AUTO" in __import__("os").environ:
+    # Env knobs override CLI flags. CXSWAP_* is kept for the README's
+    # original short-name examples; CODEX_SWAP_* is the explicit form.
+    env = __import__("os").environ
+    if "CODEX_SWAP_SKIP_AUTO" in env or "CXSWAP_SKIP_AUTO" in env:
         skip_auto = True
-    env_slot = __import__("os").environ.get("CODEX_SWAP_SLOT")
+    env_slot = env.get("CODEX_SWAP_SLOT") or env.get("CXSWAP_SLOT")
     if env_slot:
         pinned = env_slot
     launch(forwarded, skip_auto=skip_auto, pinned_slot=pinned)

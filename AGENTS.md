@@ -67,6 +67,19 @@ codex-swap add                # snapshots auth.json as slot 1
 codex-swap status             # confirm: "Active: slot 1 — <email> (pro)"
 ```
 
+If the machine already has saved Codex profile directories, prefer importing
+those snapshots over forcing new OAuth browser logins:
+
+```bash
+codex-swap import-profile personal
+codex-swap import-profile work --label work
+```
+
+`import-profile` accepts a name under `~/.codex-profiles`, a profile directory,
+or an `auth.json` file. It supports ChatGPT OAuth and API-key auth; API-key
+slots cannot report ChatGPT 5-hour/7-day usage, so use `CXSWAP_SLOT=<slot> cx`
+or `CODEX_SWAP_SLOT=<slot> cx` when you specifically want that slot.
+
 ### Step 4 — Onboard the remaining accounts
 
 Ask the human how many more ChatGPT Pro accounts they have (typically 1 or 2 more). Then:
@@ -86,14 +99,15 @@ This runs an interactive loop. For each account:
 ### Step 5 — Verify all slots are healthy
 
 ```bash
-codex-swap verify             # runs a real `codex exec ok` per slot
+codex-swap verify             # runs a small real `codex exec` probe per slot
 ```
 
-Each row shows `ok`, `rate_limited`, or `broken`:
+Each row shows `ok`, `rate_limited`, `broken`, or `error`:
 
 - **ok** — slot is usable now.
 - **rate_limited** — auth is fine, the account just hit its 5h or 7d cap. Will recover when the window resets.
 - **broken** — the refresh token is dead. Need to re-mint:
+- **error** — the probe failed for a non-auth reason. Do not reauth just because of `error`; inspect the detail and fix the local Codex/model/config issue.
 
 ```bash
 codex-swap reconnect          # walks through fresh logins for every broken slot
@@ -117,6 +131,7 @@ Cheap (safe to run any time, no token cost):
 
 Mutating (changes auth state on disk):
 - `codex-swap add` — current login → new slot
+- `codex-swap import-profile <profile>` — existing profile/auth.json → new slot
 - `codex-swap remove <slot>` — delete a slot
 - `codex-swap switch [<slot>]` — copy slot's snapshot → live auth.json
 - `codex-swap stash` — copy live auth.json → slot snapshot
