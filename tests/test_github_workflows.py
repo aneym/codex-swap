@@ -16,15 +16,21 @@ def test_main_push_ci_auto_tags_and_publishes_release():
 
     assert "push:" in ci
     assert "branches: [main]" in ci
+    assert "actions/checkout@v6" in ci
+    assert "actions/checkout@v4" not in ci
 
     assert 'workflows: ["CI"]' in tag_release
     assert "branches: [main]" in tag_release
+    assert "actions/checkout@v6" in tag_release
+    assert "actions/checkout@v4" not in tag_release
     assert "github.event.workflow_run.conclusion == 'success'" in tag_release
     assert "github.event.workflow_run.event == 'push'" in tag_release
     assert 'echo "tag=v$version" >> "$GITHUB_OUTPUT"' in tag_release
     assert 'git push origin "$tag"' in tag_release
 
     assert 'tags: ["v*"]' in publish
+    assert "actions/checkout@v6" in publish
+    assert "actions/checkout@v4" not in publish
     assert "id-token: write" in publish
     assert "pypa/gh-action-pypi-publish" in publish
     assert "softprops/action-gh-release" in publish
