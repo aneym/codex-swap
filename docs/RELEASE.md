@@ -35,6 +35,12 @@ PyPI Trusted Publishing must be configured once:
 - Workflow: `publish.yml`
 - Environment: `pypi`
 
+For a new project that is not on PyPI yet, use PyPI's pending publisher flow:
+https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/
+
+General Trusted Publisher docs:
+https://docs.pypi.org/trusted-publishers/
+
 The expected PyPI OIDC claims are:
 
 - `sub`: `repo:aneym/codex-swap:environment:pypi`
