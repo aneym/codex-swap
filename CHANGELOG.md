@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## 0.1.2 — 2026-05-05
+
 - Prefer GitHub release wheel artifacts over `git+...@tag` installs when PyPI is unavailable, keeping bootstrap installs faster and independent of Git.
 - Publish `install.sh` as a GitHub Release asset so the recommended install command can use the stable latest-release URL instead of raw branch content.
 - Update GitHub workflows to `actions/checkout@v6` so main/release automation avoids the Node 20 deprecation path.
