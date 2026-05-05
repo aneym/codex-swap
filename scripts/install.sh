@@ -3,13 +3,14 @@
 #
 # Default behavior:
 #   - use uv when available, otherwise pipx
-#   - try PyPI first, then fall back to GitHub main while PyPI is bootstrapping
+#   - try PyPI first, then latest GitHub release, then GitHub main as last resort
 #   - do not mutate shell rc files unless --shell-helpers is passed
 
 set -euo pipefail
 
 PACKAGE="codex-swap"
-GIT_SPEC="git+https://github.com/aneym/codex-swap"
+REPO_URL="https://github.com/aneym/codex-swap"
+GIT_MAIN_SPEC="git+${REPO_URL}"
 SOURCE="${CODEX_SWAP_INSTALL_SOURCE:-auto}"
 DRY_RUN=0
 CHECK_PATH=1
@@ -23,7 +24,7 @@ Usage:
   scripts/install.sh [options]
 
 Options:
-  --source auto|pypi|git   Install source. Default: auto.
+  --source auto|pypi|release|git   Install source. Default: auto.
   --shell-helpers          Append cx helper functions to ~/.zshrc or ~/.bashrc.
   --no-path-check          Skip ~/.local/bin PATH warning.
   --dry-run                Print the chosen install command without running it.
@@ -31,7 +32,7 @@ Options:
 
 Examples:
   curl -fsSL https://raw.githubusercontent.com/aneym/codex-swap/main/scripts/install.sh | bash
-  curl -fsSL https://raw.githubusercontent.com/aneym/codex-swap/main/scripts/install.sh | bash -s -- --source git
+  curl -fsSL https://raw.githubusercontent.com/aneym/codex-swap/main/scripts/install.sh | bash -s -- --source release
   scripts/install.sh --shell-helpers
 USAGE
 }
@@ -67,9 +68,9 @@ while [ $# -gt 0 ]; do
 done
 
 case "$SOURCE" in
-  auto|pypi|git) ;;
+  auto|pypi|release|git) ;;
   *)
-    echo "--source must be auto, pypi, or git." >&2
+    echo "--source must be auto, pypi, release, or git." >&2
     exit 2
     ;;
 esac
@@ -107,23 +108,64 @@ install_spec() {
   fi
 }
 
+latest_release_tag() {
+  if [ -n "${CODEX_SWAP_INSTALL_RELEASE_TAG:-}" ]; then
+    echo "$CODEX_SWAP_INSTALL_RELEASE_TAG"
+    return 0
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    return 1
+  fi
+  curl -fsSL "https://api.github.com/repos/aneym/codex-swap/releases/latest" |
+    sed -nE 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' |
+    head -1
+}
+
+release_spec() {
+  local tag
+  tag="$(latest_release_tag || true)"
+  if [ -z "$tag" ]; then
+    return 1
+  fi
+  echo "git+${REPO_URL}@${tag}"
+}
+
 install_package() {
   local installer="$1"
+  local spec
   case "$SOURCE" in
     pypi)
       install_spec "$installer" "$PACKAGE"
       ;;
+    release)
+      spec="$(release_spec)" || {
+        echo "Could not discover latest GitHub release." >&2
+        exit 1
+      }
+      install_spec "$installer" "$spec"
+      ;;
     git)
-      install_spec "$installer" "$GIT_SPEC"
+      install_spec "$installer" "$GIT_MAIN_SPEC"
       ;;
     auto)
       if [ "$DRY_RUN" -eq 1 ]; then
-        echo "# auto: try PyPI, then GitHub fallback"
+        echo "# auto: try PyPI, then latest GitHub release, then GitHub main"
         install_spec "$installer" "$PACKAGE"
-        install_spec "$installer" "$GIT_SPEC"
+        spec="$(release_spec || true)"
+        if [ -n "$spec" ]; then
+          install_spec "$installer" "$spec"
+        else
+          echo "# latest GitHub release could not be discovered"
+        fi
+        install_spec "$installer" "$GIT_MAIN_SPEC"
       elif ! install_spec "$installer" "$PACKAGE"; then
-        echo "PyPI install failed; falling back to GitHub main." >&2
-        install_spec "$installer" "$GIT_SPEC"
+        echo "PyPI install failed; falling back to latest GitHub release." >&2
+        spec="$(release_spec || true)"
+        if [ -n "$spec" ] && install_spec "$installer" "$spec"; then
+          return 0
+        fi
+        echo "GitHub release install failed; falling back to GitHub main." >&2
+        install_spec "$installer" "$GIT_MAIN_SPEC"
       fi
       ;;
   esac

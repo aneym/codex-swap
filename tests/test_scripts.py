@@ -22,14 +22,40 @@ def _run(*args: str) -> subprocess.CompletedProcess[str]:
 def test_install_script_help():
     proc = _run("bash", "scripts/install.sh", "--help")
     assert "Install codex-swap" in proc.stdout
-    assert "--source auto|pypi|git" in proc.stdout
+    assert "--source auto|pypi|release|git" in proc.stdout
 
 
-def test_install_script_dry_run_git():
-    proc = _run("bash", "scripts/install.sh", "--dry-run", "--source", "git", "--no-path-check")
+def test_install_script_dry_run_release():
+    env = os.environ.copy()
+    env["CODEX_SWAP_INSTALL_RELEASE_TAG"] = "v9.8.7"
+    proc = subprocess.run(
+        ["bash", "scripts/install.sh", "--dry-run", "--source", "release", "--no-path-check"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
     combined = proc.stdout + proc.stderr
-    assert "git+https://github.com/aneym/codex-swap" in combined
+    assert "git+https://github.com/aneym/codex-swap@v9.8.7" in combined
     assert "tool install" in combined or "pipx install" in combined
+
+
+def test_install_script_dry_run_auto_uses_release_before_main():
+    env = os.environ.copy()
+    env["CODEX_SWAP_INSTALL_RELEASE_TAG"] = "v9.8.7"
+    proc = subprocess.run(
+        ["bash", "scripts/install.sh", "--dry-run", "--source", "auto", "--no-path-check"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+    combined = proc.stdout + proc.stderr
+    assert "codex-swap" in combined
+    assert "git+https://github.com/aneym/codex-swap@v9.8.7" in combined
+    assert "git+https://github.com/aneym/codex-swap" in combined
 
 
 def test_release_script_help():

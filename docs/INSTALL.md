@@ -11,7 +11,7 @@
 curl -fsSL https://raw.githubusercontent.com/aneym/codex-swap/main/scripts/install.sh | bash
 ```
 
-The installer uses `uv` when available, otherwise `pipx`. It tries PyPI first and falls back to GitHub while the first PyPI release is bootstrapping.
+The installer uses `uv` when available, otherwise `pipx`. It tries PyPI first, then the latest GitHub release, then GitHub `main` as a last-resort fallback while the first PyPI release is bootstrapping.
 
 ## Stable Package
 
@@ -21,6 +21,22 @@ After the PyPI release is available:
 uv tool install codex-swap
 # or
 pipx install codex-swap
+```
+
+## GitHub Release
+
+Use this when PyPI is not available yet but you want the latest stable release:
+
+```bash
+uv tool install --force git+https://github.com/aneym/codex-swap@v0.1.1
+# or
+pipx install --force git+https://github.com/aneym/codex-swap@v0.1.1
+```
+
+The installer can discover the latest release automatically:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aneym/codex-swap/main/scripts/install.sh | bash -s -- --source release
 ```
 
 ## GitHub Main
