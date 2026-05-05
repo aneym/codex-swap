@@ -8,7 +8,7 @@
 ## Recommended
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/aneym/codex-swap/main/scripts/install.sh | bash
+curl -fsSL https://github.com/aneym/codex-swap/releases/latest/download/install.sh | bash
 ```
 
 The installer uses `uv` when available, otherwise `pipx`. It tries PyPI first, then the latest GitHub release, then GitHub `main` as a last-resort fallback while the first PyPI release is bootstrapping.

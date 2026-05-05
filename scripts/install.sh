@@ -31,8 +31,8 @@ Options:
   -h, --help               Show this help.
 
 Examples:
-  curl -fsSL https://raw.githubusercontent.com/aneym/codex-swap/main/scripts/install.sh | bash
-  curl -fsSL https://raw.githubusercontent.com/aneym/codex-swap/main/scripts/install.sh | bash -s -- --source release
+  curl -fsSL https://github.com/aneym/codex-swap/releases/latest/download/install.sh | bash
+  curl -fsSL https://github.com/aneym/codex-swap/releases/latest/download/install.sh | bash -s -- --source release
   scripts/install.sh --shell-helpers
 USAGE
 }

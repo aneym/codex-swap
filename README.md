@@ -28,7 +28,7 @@ If you have multiple Codex Pro accounts and you keep hitting the 5-hour cap on w
 Recommended — installs two commands (`codex-swap` and `cx`) into `~/.local/bin`, using PyPI when available and falling back to the latest GitHub release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/aneym/codex-swap/main/scripts/install.sh | bash
+curl -fsSL https://github.com/aneym/codex-swap/releases/latest/download/install.sh | bash
 ```
 
 Or pick a package manager directly:
