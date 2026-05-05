@@ -81,6 +81,11 @@ jobs:
             git log --pretty=format:'- %s' "$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || git rev-list --max-parents=0 HEAD)..HEAD" >> release-notes.md
           fi
 
+      - name: Write release checksums
+        run: |
+          cp scripts/install.sh install.sh
+          sha256sum dist/* install.sh > SHA256SUMS
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
@@ -88,5 +93,6 @@ jobs:
           body_path: release-notes.md
           files: |
             dist/*
-            scripts/install.sh
+            install.sh
+            SHA256SUMS
           generate_release_notes: false

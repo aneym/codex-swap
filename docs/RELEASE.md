@@ -4,7 +4,7 @@ Production release automation has three gates:
 
 1. `CI` runs on every push to `main` and pull request.
 2. After `CI` succeeds on a `main` push, `Tag release from main` creates `vX.Y.Z` if the package version is new and `CHANGELOG.md` has a matching section.
-3. Pushing a `v*` tag runs `Publish to PyPI`, which builds, checks, uploads artifacts, publishes to PyPI, and creates a GitHub release with wheel, sdist, and installer assets.
+3. Pushing a `v*` tag runs `Publish to PyPI`, which builds, checks, uploads artifacts, publishes to PyPI, and creates a GitHub release with wheel, sdist, installer, and checksum assets.
 
 ## Prepare a Release
 

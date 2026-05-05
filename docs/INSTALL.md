@@ -11,7 +11,7 @@
 curl -fsSL https://github.com/aneym/codex-swap/releases/latest/download/install.sh | bash
 ```
 
-The installer uses `uv` when available, otherwise `pipx`. It tries PyPI first, then the latest GitHub release, then GitHub `main` as a last-resort fallback while the first PyPI release is bootstrapping.
+The installer uses `uv` when available, otherwise `pipx`. It tries PyPI first, then the latest GitHub release wheel, then GitHub `main` as a last-resort fallback while the first PyPI release is bootstrapping.
 
 ## Stable Package
 
@@ -36,7 +36,13 @@ pipx install --force https://github.com/aneym/codex-swap/releases/download/v0.1.
 The installer can discover the latest release automatically:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/aneym/codex-swap/main/scripts/install.sh | bash -s -- --source release
+curl -fsSL https://github.com/aneym/codex-swap/releases/latest/download/install.sh | bash -s -- --source release
+```
+
+Release checksums are published beside the artifacts:
+
+```bash
+curl -fsSL https://github.com/aneym/codex-swap/releases/latest/download/SHA256SUMS
 ```
 
 ## GitHub Main
@@ -54,7 +60,7 @@ pipx install --force git+https://github.com/aneym/codex-swap
 To add `cxslot`, `cxaccounts`, `cxstatus`, `cxverify`, and related helpers:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/aneym/codex-swap/main/scripts/install.sh | bash -s -- --shell-helpers
+curl -fsSL https://github.com/aneym/codex-swap/releases/latest/download/install.sh | bash -s -- --shell-helpers
 ```
 
 ## Verify
@@ -73,7 +79,7 @@ codex-swap verify
 ```bash
 uv tool install --upgrade codex-swap
 # or, before PyPI is live:
-uv tool install --force git+https://github.com/aneym/codex-swap
+curl -fsSL https://github.com/aneym/codex-swap/releases/latest/download/install.sh | bash
 ```
 
 ## Uninstall

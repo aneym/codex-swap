@@ -34,4 +34,6 @@ def test_main_push_ci_auto_tags_and_publishes_release():
     assert "id-token: write" in publish
     assert "pypa/gh-action-pypi-publish" in publish
     assert "softprops/action-gh-release" in publish
-    assert "scripts/install.sh" in publish
+    assert "sha256sum dist/* install.sh > SHA256SUMS" in publish
+    assert "install.sh" in publish
+    assert "SHA256SUMS" in publish
