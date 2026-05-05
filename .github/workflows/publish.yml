@@ -84,7 +84,12 @@ jobs:
       - name: Write release checksums
         run: |
           cp scripts/install.sh install.sh
-          sha256sum dist/* install.sh > SHA256SUMS
+          # Run sha256sum from inside dist/ so the recorded filenames match
+          # the names release assets are uploaded under (no `dist/` prefix);
+          # otherwise install.sh's `sha256sum -c` step looks for files in
+          # the wrong location and fails. Append install.sh from repo root.
+          ( cd dist && sha256sum * ) > SHA256SUMS
+          sha256sum install.sh >> SHA256SUMS
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v3
