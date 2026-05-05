@@ -11,7 +11,7 @@
 curl -fsSL https://github.com/aneym/codex-swap/releases/latest/download/install.sh | bash
 ```
 
-The installer uses `uv` when available, otherwise `pipx`. It tries PyPI first, then the latest GitHub release wheel, then GitHub `main` as a last-resort fallback while the first PyPI release is bootstrapping.
+The installer uses `uv` when available, otherwise `pipx`, otherwise a private Python venv under `~/.local/share/codex-swap/venv`. It tries PyPI first, then the latest GitHub release wheel, then GitHub `main` as a last-resort fallback while the first PyPI release is bootstrapping.
 
 ## Stable Package
 
@@ -89,4 +89,11 @@ codex-swap purge --yes
 uv tool uninstall codex-swap
 ```
 
-Run `purge` before uninstall if you want to remove local slot snapshots. If you already uninstalled, remove `~/.codex-swap/` manually.
+Run `purge` before uninstall if you want to remove local slot snapshots. If you installed through the fallback venv path instead of `uv` or `pipx`, remove the venv and shims:
+
+```bash
+rm -rf "${XDG_DATA_HOME:-$HOME/.local/share}/codex-swap/venv"
+rm -f ~/.local/bin/codex-swap ~/.local/bin/cx
+```
+
+If you already uninstalled, remove `~/.codex-swap/` manually.

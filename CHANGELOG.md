@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Update GitHub workflows to `actions/checkout@v6` so main/release automation avoids the Node 20 deprecation path.
 - Publish `SHA256SUMS` for GitHub release artifacts and document the checksum route.
 - Keep README install/uninstall snippets aligned with the production installer and purge-before-uninstall flow.
+- Add a private Python venv fallback so the release installer works even when `uv` and `pipx` are not installed.
 
 ## 0.1.1 — 2026-05-05
 

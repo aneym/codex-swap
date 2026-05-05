@@ -97,6 +97,36 @@ chmod +x {str(app_dir / "cx")!r}
     assert "command not found" not in combined
 
 
+def test_install_script_dry_run_uses_private_venv_without_uv_or_pipx(tmp_path: Path):
+    bin_dir = tmp_path / "bin"
+    app_dir = tmp_path / "apps"
+    venv_dir = tmp_path / "venv"
+    bin_dir.mkdir()
+    fake_python = bin_dir / "python3"
+    fake_python.write_text("#!/usr/bin/env bash\nexit 0\n")
+    fake_python.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}:/usr/bin:/bin"
+    env["CODEX_SWAP_BIN_DIR"] = str(app_dir)
+    env["CODEX_SWAP_VENV_DIR"] = str(venv_dir)
+    proc = subprocess.run(
+        ["bash", "scripts/install.sh", "--dry-run", "--source", "pypi", "--no-path-check"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+
+    combined = proc.stdout + proc.stderr
+    assert "Installing codex-swap with venv" in combined
+    assert f"python3 -m venv {venv_dir}" in combined
+    assert f"{venv_dir}/bin/python -m pip install --upgrade codex-swap" in combined
+    assert f"ln -sf {venv_dir}/bin/codex-swap {app_dir}/codex-swap" in combined
+    assert f"ln -sf {venv_dir}/bin/cx {app_dir}/cx" in combined
+
+
 def test_release_script_help():
     proc = _run("bash", "scripts/release.sh", "--help")
     assert "Release codex-swap" in proc.stdout

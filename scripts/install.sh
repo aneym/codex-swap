@@ -2,7 +2,7 @@
 # Production installer for codex-swap.
 #
 # Default behavior:
-#   - use uv when available, otherwise pipx
+#   - use uv when available, otherwise pipx, otherwise a private Python venv
 #   - try PyPI first, then the latest GitHub release wheel, then GitHub main as last resort
 #   - do not mutate shell rc files unless --shell-helpers is passed
 
@@ -90,11 +90,22 @@ installer_name() {
     echo "uv"
   elif command -v pipx >/dev/null 2>&1; then
     echo "pipx"
+  elif command -v python3 >/dev/null 2>&1; then
+    echo "venv"
   else
-    echo "Need uv or pipx to install codex-swap." >&2
+    echo "Need uv, pipx, or python3 to install codex-swap." >&2
     echo "Install uv:   curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
     echo "Install pipx: brew install pipx" >&2
+    echo "Install Python 3: https://www.python.org/downloads/" >&2
     exit 1
+  fi
+}
+
+venv_dir() {
+  if [ -n "${CODEX_SWAP_VENV_DIR:-}" ]; then
+    echo "$CODEX_SWAP_VENV_DIR"
+  else
+    echo "${XDG_DATA_HOME:-$HOME/.local/share}/codex-swap/venv"
   fi
 }
 
@@ -103,8 +114,18 @@ install_spec() {
   local spec="$2"
   if [ "$installer" = "uv" ]; then
     run_cmd uv tool install --force "$spec"
-  else
+  elif [ "$installer" = "pipx" ]; then
     run_cmd pipx install --force "$spec"
+  else
+    local venv
+    local bin_dir
+    venv="$(venv_dir)"
+    bin_dir="$(installer_bin_dir "$installer")"
+    run_cmd python3 -m venv "$venv"
+    run_cmd "$venv/bin/python" -m pip install --upgrade "$spec"
+    run_cmd mkdir -p "$bin_dir"
+    run_cmd ln -sf "$venv/bin/codex-swap" "$bin_dir/codex-swap"
+    run_cmd ln -sf "$venv/bin/cx" "$bin_dir/cx"
   fi
 }
 
@@ -112,8 +133,10 @@ installer_bin_dir() {
   local installer="$1"
   if [ "$installer" = "uv" ]; then
     echo "${UV_TOOL_BIN_DIR:-$HOME/.local/bin}"
-  else
+  elif [ "$installer" = "pipx" ]; then
     echo "${PIPX_BIN_DIR:-$HOME/.local/bin}"
+  else
+    echo "${CODEX_SWAP_BIN_DIR:-$HOME/.local/bin}"
   fi
 }
 
