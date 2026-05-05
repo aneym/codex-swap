@@ -108,6 +108,15 @@ install_spec() {
   fi
 }
 
+installer_bin_dir() {
+  local installer="$1"
+  if [ "$installer" = "uv" ]; then
+    echo "${UV_TOOL_BIN_DIR:-$HOME/.local/bin}"
+  else
+    echo "${PIPX_BIN_DIR:-$HOME/.local/bin}"
+  fi
+}
+
 latest_release_tag() {
   if [ -n "${CODEX_SWAP_INSTALL_RELEASE_TAG:-}" ]; then
     echo "$CODEX_SWAP_INSTALL_RELEASE_TAG"
@@ -219,18 +228,31 @@ warn_if_codex_missing_or_old() {
   fi
 }
 
+print_installed_version() {
+  local bin_dir="$1"
+  if command -v codex-swap >/dev/null 2>&1; then
+    codex-swap --version
+  elif [ -x "$bin_dir/codex-swap" ]; then
+    "$bin_dir/codex-swap" --version
+  else
+    echo "Installed, but codex-swap is not on PATH yet." >&2
+  fi
+}
+
 main() {
   local installer
   installer="$(installer_name)"
+  local bin_dir
+  bin_dir="$(installer_bin_dir "$installer")"
   echo "Installing codex-swap with $installer (source: $SOURCE)"
   install_package "$installer"
 
   if [ "$CHECK_PATH" -eq 1 ]; then
     case ":$PATH:" in
-      *":$HOME/.local/bin:"*) ;;
+      *":$bin_dir:"*) ;;
       *)
-        echo "Warning: ~/.local/bin is not on PATH. Add:" >&2
-        echo '  export PATH="$HOME/.local/bin:$PATH"' >&2
+        echo "Warning: $bin_dir is not on PATH. Add:" >&2
+        echo "  export PATH=\"$bin_dir:\$PATH\"" >&2
         ;;
     esac
   fi
@@ -240,7 +262,7 @@ main() {
   fi
 
   if [ "$DRY_RUN" -eq 0 ]; then
-    codex-swap --version
+    print_installed_version "$bin_dir"
     warn_if_codex_missing_or_old
     echo "Installed. Next: codex-swap add && codex-swap onboard 2 && codex-swap verify"
   fi
