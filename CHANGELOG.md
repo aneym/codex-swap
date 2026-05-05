@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add a reusable installer smoke test and CI job covering `uv`, `pipx`, and private-venv install backends.
 - Verify GitHub release wheel checksums before installing release fallback artifacts.
 - Replace the README PyPI badge with the GitHub Release badge until PyPI publishing is live.
+- Spell out the PyPI pending-publisher setup fields required for first publish.
 
 ## 0.1.1 — 2026-05-05
 

@@ -32,6 +32,7 @@ If a release commit is pushed to `main` without a tag, the successful `CI` run c
 
 PyPI Trusted Publishing must be configured once:
 
+- PyPI project name: `codex-swap`
 - Owner: `aneym`
 - Repository: `codex-swap`
 - Workflow: `publish.yml`

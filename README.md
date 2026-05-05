@@ -232,13 +232,16 @@ See [`docs/RELEASE.md`](docs/RELEASE.md) for the exact automation path.
 
 Before the first publish runs cleanly:
 
-1. Reserve the package name on PyPI by uploading any 0.0.x build manually (or have a maintainer claim it).
-2. On PyPI → *Manage project* → *Publishing* → add a GitHub publisher:
+1. In PyPI's pending publisher flow, create the `codex-swap` project publisher:
+   https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/
+2. Configure the GitHub publisher fields exactly:
+   - PyPI project name: `codex-swap`
    - Owner: `aneym`
    - Repository: `codex-swap`
    - Workflow: `publish.yml`
    - Environment: `pypi`
-3. On GitHub → repo *Settings* → *Environments* → create `pypi` (no secrets needed — the OIDC token handles auth).
+3. On GitHub → repo *Settings* → *Environments* → confirm `pypi` exists (no secrets needed — the OIDC token handles auth).
+4. Rerun the failed `Publish to PyPI` job, or push the next version tag.
 
 After that, every `git push` of a `vX.Y.Z` tag publishes automatically.
 

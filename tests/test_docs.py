@@ -32,6 +32,17 @@ def test_readme_keeps_pypi_install_behind_setup_note():
     )
 
 
+def test_release_docs_spell_out_pypi_pending_publisher():
+    docs = _read("README.md") + "\n" + _read("docs/RELEASE.md")
+
+    assert "pending publisher flow" in docs
+    assert "PyPI project name: `codex-swap`" in docs
+    assert "Owner: `aneym`" in docs
+    assert "Repository: `codex-swap`" in docs
+    assert "Workflow: `publish.yml`" in docs
+    assert "Environment: `pypi`" in docs
+
+
 def test_readme_purges_state_before_uninstalling_tool():
     readme = _read("README.md")
 
