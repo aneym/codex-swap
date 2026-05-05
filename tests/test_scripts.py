@@ -127,6 +127,15 @@ def test_install_script_dry_run_uses_private_venv_without_uv_or_pipx(tmp_path: P
     assert f"ln -sf {venv_dir}/bin/cx {app_dir}/cx" in combined
 
 
+def test_install_script_verifies_release_wheel_checksums():
+    script = Path("scripts/install.sh").read_text()
+
+    assert "SHA256SUMS" in script
+    assert "verify_release_wheel" in script
+    assert "sha256sum -c SHA256SUMS.wheel" in script
+    assert "shasum -a 256 -c SHA256SUMS.wheel" in script
+
+
 def test_release_script_help():
     proc = _run("bash", "scripts/release.sh", "--help")
     assert "Release codex-swap" in proc.stdout

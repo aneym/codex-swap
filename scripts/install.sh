@@ -153,13 +153,85 @@ latest_release_tag() {
     head -1
 }
 
+release_url_for_tag() {
+  local tag="$1"
+  echo "${REPO_URL}/releases/download/${tag}/codex_swap-${tag#v}-py3-none-any.whl"
+}
+
 release_spec() {
   local tag
   tag="$(latest_release_tag || true)"
   if [ -z "$tag" ]; then
     return 1
   fi
-  echo "${REPO_URL}/releases/download/${tag}/codex_swap-${tag#v}-py3-none-any.whl"
+  release_url_for_tag "$tag"
+}
+
+verify_release_wheel() {
+  local tag="$1"
+  local tmp_dir="$2"
+  local version="${tag#v}"
+  local wheel_name="codex_swap-${version}-py3-none-any.whl"
+  local base_url="${REPO_URL}/releases/download/${tag}"
+
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "Need curl to download GitHub release artifacts." >&2
+    return 1
+  fi
+  if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+    echo "Need sha256sum or shasum to verify GitHub release artifacts." >&2
+    return 1
+  fi
+
+  curl -fLso "$tmp_dir/$wheel_name" "$base_url/$wheel_name" || return 1
+  curl -fLso "$tmp_dir/SHA256SUMS" "$base_url/SHA256SUMS" || return 1
+
+  if ! awk -v file="$wheel_name" '$2 == file { print; found=1; exit } END { if (!found) exit 1 }' \
+    "$tmp_dir/SHA256SUMS" > "$tmp_dir/SHA256SUMS.wheel"; then
+    echo "SHA256SUMS does not contain $wheel_name." >&2
+    return 1
+  fi
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    (cd "$tmp_dir" && sha256sum -c SHA256SUMS.wheel >&2) || return 1
+  else
+    (cd "$tmp_dir" && shasum -a 256 -c SHA256SUMS.wheel >&2) || return 1
+  fi
+
+  echo "$tmp_dir/$wheel_name"
+}
+
+install_release() {
+  local installer="$1"
+  local tag
+  local spec
+  local tmp_dir
+  local status
+
+  tag="$(latest_release_tag || true)"
+  if [ -z "$tag" ]; then
+    echo "Could not discover latest GitHub release." >&2
+    return 1
+  fi
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    install_spec "$installer" "$(release_url_for_tag "$tag")"
+    return $?
+  fi
+
+  tmp_dir="$(mktemp -d)"
+  if ! spec="$(verify_release_wheel "$tag" "$tmp_dir")"; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+
+  if install_spec "$installer" "$spec"; then
+    rm -rf "$tmp_dir"
+    return 0
+  fi
+  status=$?
+  rm -rf "$tmp_dir"
+  return "$status"
 }
 
 install_package() {
@@ -170,11 +242,9 @@ install_package() {
       install_spec "$installer" "$PACKAGE"
       ;;
     release)
-      spec="$(release_spec)" || {
-        echo "Could not discover latest GitHub release." >&2
+      install_release "$installer" || {
         exit 1
       }
-      install_spec "$installer" "$spec"
       ;;
     git)
       install_spec "$installer" "$GIT_MAIN_SPEC"
@@ -192,8 +262,7 @@ install_package() {
         install_spec "$installer" "$GIT_MAIN_SPEC"
       elif ! install_spec "$installer" "$PACKAGE"; then
         echo "PyPI install failed; falling back to latest GitHub release." >&2
-        spec="$(release_spec || true)"
-        if [ -n "$spec" ] && install_spec "$installer" "$spec"; then
+        if install_release "$installer"; then
           return 0
         fi
         echo "GitHub release install failed; falling back to GitHub main." >&2

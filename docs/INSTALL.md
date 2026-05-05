@@ -39,7 +39,7 @@ The installer can discover the latest release automatically:
 curl -fsSL https://github.com/aneym/codex-swap/releases/latest/download/install.sh | bash -s -- --source release
 ```
 
-Release checksums are published beside the artifacts:
+The installer verifies the GitHub release wheel against the published checksums before installing it. Release checksums are published beside the artifacts:
 
 ```bash
 curl -fsSL https://github.com/aneym/codex-swap/releases/latest/download/SHA256SUMS
