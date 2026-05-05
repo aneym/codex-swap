@@ -1,7 +1,7 @@
 # codex-swap
 
 [![CI](https://github.com/aneym/codex-swap/actions/workflows/ci.yml/badge.svg)](https://github.com/aneym/codex-swap/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/codex-swap.svg)](https://pypi.org/project/codex-swap/)
+[![Release](https://img.shields.io/github/v/release/aneym/codex-swap?display_name=tag)](https://github.com/aneym/codex-swap/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Pick the ChatGPT Pro account with the lowest usage every time you launch [Codex CLI](https://github.com/openai/codex). One command, no thinking.
@@ -31,22 +31,20 @@ Recommended — installs two commands (`codex-swap` and `cx`) into `~/.local/bin
 curl -fsSL https://github.com/aneym/codex-swap/releases/latest/download/install.sh | bash
 ```
 
-Or pick a package manager directly:
-
-```bash
-# Recommended (faster, isolated):
-uv tool install codex-swap
-
-# or:
-pipx install codex-swap
-```
-
-Until codex-swap is on PyPI, install the latest GitHub release wheel:
+Until codex-swap is on PyPI, package-manager installs should point at the latest GitHub release wheel:
 
 ```bash
 uv tool install https://github.com/aneym/codex-swap/releases/download/v0.1.1/codex_swap-0.1.1-py3-none-any.whl
 # or:
 pipx install https://github.com/aneym/codex-swap/releases/download/v0.1.1/codex_swap-0.1.1-py3-none-any.whl
+```
+
+After PyPI Trusted Publishing is configured:
+
+```bash
+uv tool install codex-swap
+# or:
+pipx install codex-swap
 ```
 
 Make sure `~/.local/bin` is on your `PATH`. If not:

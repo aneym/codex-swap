@@ -16,6 +16,22 @@ def test_docs_prefer_stable_release_installer():
     assert "raw.githubusercontent.com/aneym/codex-swap/main/scripts/install.sh" not in docs
 
 
+def test_readme_does_not_advertise_unpublished_pypi_badge():
+    readme = _read("README.md")
+
+    assert "img.shields.io/github/v/release/aneym/codex-swap" in readme
+    assert "img.shields.io/pypi/v/codex-swap" not in readme
+
+
+def test_readme_keeps_pypi_install_behind_setup_note():
+    readme = _read("README.md")
+
+    assert readme.index("Until codex-swap is on PyPI") < readme.index("uv tool install codex-swap")
+    assert readme.index("After PyPI Trusted Publishing is configured") < readme.index(
+        "uv tool install codex-swap"
+    )
+
+
 def test_readme_purges_state_before_uninstalling_tool():
     readme = _read("README.md")
 
