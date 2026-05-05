@@ -63,8 +63,8 @@ uv tool install --force git+https://github.com/aneym/codex-swap
 ## Uninstall
 
 ```bash
-uv tool uninstall codex-swap
 codex-swap purge --yes
+uv tool uninstall codex-swap
 ```
 
-Run `purge` before uninstall if you want to remove local slot snapshots.
+Run `purge` before uninstall if you want to remove local slot snapshots. If you already uninstalled, remove `~/.codex-swap/` manually.

@@ -35,4 +35,17 @@ PyPI Trusted Publishing must be configured once:
 - Workflow: `publish.yml`
 - Environment: `pypi`
 
-GitHub release artifacts are created from the built wheel/sdist. PyPI publishing requires the PyPI-side Trusted Publisher entry.
+The expected PyPI OIDC claims are:
+
+- `sub`: `repo:aneym/codex-swap:environment:pypi`
+- `repository`: `aneym/codex-swap`
+- `workflow_ref`: `aneym/codex-swap/.github/workflows/publish.yml@refs/tags/vX.Y.Z`
+- `environment`: `pypi`
+
+If `Publish to PyPI` fails with `invalid-publisher`, add the Trusted Publisher entry above in PyPI, then rerun only the failed job:
+
+```bash
+gh run rerun <run-id> --repo aneym/codex-swap --failed
+```
+
+GitHub release artifacts are created from the built wheel/sdist even if PyPI publishing is not configured yet. PyPI publishing requires the PyPI-side Trusted Publisher entry.
