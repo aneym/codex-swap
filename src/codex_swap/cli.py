@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
+import os
 import sys
 import time
 from pathlib import Path
@@ -49,6 +51,84 @@ def _fmt_resets(ts) -> str:
     if delta < 86400:
         return f"in {delta // 3600}h"
     return f"in {delta // 86400}d"
+
+
+def _fmt_resets_at(ts) -> str:
+    """Long-form reset string: 'resets Thu 6:35pm, in 4h' or 'already reset'."""
+    try:
+        ts_int = int(ts)
+    except (TypeError, ValueError):
+        return ""
+    delta = ts_int - int(time.time())
+    if delta <= 0:
+        return "already reset"
+    when = (
+        _dt.datetime.fromtimestamp(ts_int)
+        .strftime("%a %-I:%M%p")
+        .replace("AM", "am")
+        .replace("PM", "pm")
+    )
+    if delta < 3600:
+        rel = f"in {delta // 60}m"
+    elif delta < 86400:
+        rel = f"in {delta // 3600}h"
+    else:
+        rel = f"in {delta // 86400}d"
+    return f"resets {when}, {rel}"
+
+
+def _supports_color() -> bool:
+    if os.environ.get("NO_COLOR"):
+        return False
+    if os.environ.get("CODEX_SWAP_FORCE_COLOR"):
+        return True
+    return bool(sys.stdout.isatty())
+
+
+class _Style:
+    """Minimal ANSI styling with TTY detection — no third-party deps."""
+
+    def __init__(self, enabled: bool) -> None:
+        self.enabled = enabled
+
+    def _wrap(self, code: str, text: str) -> str:
+        if not self.enabled or not text:
+            return text
+        return f"\033[{code}m{text}\033[0m"
+
+    def bold(self, t: str) -> str:
+        return self._wrap("1", t)
+
+    def dim(self, t: str) -> str:
+        return self._wrap("2", t)
+
+    def green(self, t: str) -> str:
+        return self._wrap("32", t)
+
+    def yellow(self, t: str) -> str:
+        return self._wrap("33", t)
+
+    def red(self, t: str) -> str:
+        return self._wrap("31", t)
+
+    def cyan(self, t: str) -> str:
+        return self._wrap("36", t)
+
+    def bold_red(self, t: str) -> str:
+        return self._wrap("1;31", t)
+
+
+def _color_pct(style: _Style, pct: float | None, text: str) -> str:
+    """Severity-color a percent string. None and 0 render dim."""
+    if pct is None:
+        return style.dim(text)
+    if pct <= 0:
+        return style.dim(text)
+    if pct < 50:
+        return style.green(text)
+    if pct < 80:
+        return style.yellow(text)
+    return style.red(text)
 
 
 def _account_label(acc: dict) -> str:
@@ -218,22 +298,52 @@ def cmd_usage(args) -> int:
     if not data:
         print("(no usage data yet — run `codex-swap seed` to populate)")
         return 0
-    for slot, info in sorted(data.items(), key=lambda kv: int(kv[0])):
-        primary = info.get("primary") if isinstance(info.get("primary"), dict) else None
-        secondary = info.get("secondary") if isinstance(info.get("secondary"), dict) else None
-        source = info.get("source") or "?"
-        if is_exhausted(info):
-            pri_str, sec_str = "100%", "100%"
-            suffix = " — limit reached, run `codex-swap seed` after the window resets"
-        else:
-            pri_str = _fmt_pct(effective_used_percent(primary))
-            sec_str = _fmt_pct(effective_used_percent(secondary))
-            suffix = ""
-        print(
-            f"slot {slot}: 5h={pri_str} 7d={sec_str} "
-            f"plan={info.get('plan_type') or '—'} (via {source}){suffix}"
-        )
+    style = _Style(_supports_color())
+    rows = sorted(data.items(), key=lambda kv: int(kv[0]))
+    for idx, (slot, info) in enumerate(rows):
+        if idx > 0:
+            print()
+        _print_usage_block(style, slot, info)
     return 0
+
+
+def _print_usage_block(style: _Style, slot: str, info: dict) -> None:
+    primary = info.get("primary") if isinstance(info.get("primary"), dict) else None
+    secondary = info.get("secondary") if isinstance(info.get("secondary"), dict) else None
+    source = info.get("source") or "?"
+    plan = info.get("plan_type") or "—"
+    exhausted = is_exhausted(info)
+
+    sep = style.dim("·")
+    header_parts = [style.bold(f"slot {slot}"), sep, plan, sep, style.dim(source)]
+    if exhausted:
+        header_parts.append("  ")
+        header_parts.append(style.bold_red("⚠ LIMIT REACHED"))
+        header_parts.append(style.dim("—"))
+        header_parts.append(f"run {style.bold('`codex-swap seed`')} to re-check")
+    print(" ".join(header_parts))
+
+    for label, win in (("5h", primary), ("7d", secondary)):
+        if exhausted:
+            pct_val: float | None = 100.0
+        else:
+            pct_val = effective_used_percent(win)
+        pct_text = f"{_fmt_pct(pct_val):>4}"
+        pct_colored = _color_pct(style, pct_val, pct_text)
+
+        resets_at = win.get("resets_at") if isinstance(win, dict) else None
+        reset_raw = _fmt_resets_at(resets_at)
+        if reset_raw == "already reset":
+            reset_part = style.cyan(reset_raw)
+        elif reset_raw:
+            reset_part = style.dim(reset_raw)
+        else:
+            reset_part = ""
+
+        line = f"  {style.dim(label)}  {pct_colored}"
+        if reset_part:
+            line += f"   {reset_part}"
+        print(line)
 
 
 def cmd_seed(args) -> int:

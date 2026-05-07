@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 
 from codex_swap import cli
 
@@ -34,7 +35,7 @@ def test_cx_main_honors_short_skip_env(monkeypatch):
 
 
 def test_cmd_usage_marks_exhausted_slot(monkeypatch, capsys):
-    """A persisted exhausted record shows 100%/100% with a `limit reached` hint."""
+    """A persisted exhausted record shows 100%/100% with a `LIMIT REACHED` hint."""
     monkeypatch.setattr(
         cli,
         "refresh_from_rollouts",
@@ -51,9 +52,10 @@ def test_cmd_usage_marks_exhausted_slot(monkeypatch, capsys):
     args = argparse.Namespace(json=False)
     assert cli.cmd_usage(args) == 0
     out = capsys.readouterr().out
-    assert "5h=100%" in out
-    assert "7d=100%" in out
-    assert "limit reached" in out
+    assert "slot 2" in out
+    assert "5h" in out and "100%" in out
+    assert "7d" in out
+    assert "LIMIT REACHED" in out
 
 
 def test_cmd_usage_renders_healthy_slot_normally(monkeypatch, capsys):
@@ -72,6 +74,80 @@ def test_cmd_usage_renders_healthy_slot_normally(monkeypatch, capsys):
     args = argparse.Namespace(json=False)
     assert cli.cmd_usage(args) == 0
     out = capsys.readouterr().out
-    assert "5h=12%" in out
-    assert "7d=4%" in out
-    assert "limit reached" not in out
+    assert "slot 1" in out
+    assert "12%" in out
+    assert "4%" in out
+    assert "LIMIT REACHED" not in out
+
+
+def test_cmd_usage_shows_window_reset_times(monkeypatch, capsys):
+    """Healthy slots show absolute + relative reset time inline per window."""
+    future_5h = int(time.time()) + 4 * 3600
+    future_7d = int(time.time()) + 3 * 86400
+    monkeypatch.setattr(
+        cli,
+        "refresh_from_rollouts",
+        lambda: {
+            "1": {
+                "primary": {"used_percent": 38.0, "resets_at": future_5h},
+                "secondary": {"used_percent": 99.0, "resets_at": future_7d},
+                "plan_type": "pro",
+                "source": "rollout",
+            }
+        },
+    )
+    args = argparse.Namespace(json=False)
+    assert cli.cmd_usage(args) == 0
+    out = capsys.readouterr().out
+    assert "38%" in out
+    assert "99%" in out
+    assert "resets " in out
+    assert "in 4h" in out
+    assert "in 3d" in out
+
+
+def test_cmd_usage_marks_window_already_reset(monkeypatch, capsys):
+    """A past resets_at on an exhausted slot prints 'already reset' so the
+    user knows the window has cleared and they can seed."""
+    past_5h = int(time.time()) - 60
+    future_7d = int(time.time()) + 3 * 86400
+    monkeypatch.setattr(
+        cli,
+        "refresh_from_rollouts",
+        lambda: {
+            "2": {
+                "primary": {"used_percent": 94.0, "resets_at": past_5h},
+                "secondary": {"used_percent": 47.0, "resets_at": future_7d},
+                "exhausted": True,
+                "plan_type": "pro",
+                "source": "rollout-exhausted",
+            }
+        },
+    )
+    args = argparse.Namespace(json=False)
+    assert cli.cmd_usage(args) == 0
+    out = capsys.readouterr().out
+    assert "100%" in out
+    assert "already reset" in out
+    assert "LIMIT REACHED" in out
+
+
+def test_cmd_usage_omits_color_codes_when_not_a_tty(monkeypatch, capsys):
+    """Output piped to a non-tty must be ANSI-free for clean grep/redirect."""
+    monkeypatch.setattr(
+        cli,
+        "refresh_from_rollouts",
+        lambda: {
+            "1": {
+                "primary": {"used_percent": 10.0, "resets_at": int(time.time()) + 7200},
+                "secondary": {"used_percent": 5.0, "resets_at": int(time.time()) + 600_000},
+                "plan_type": "pro",
+                "source": "rollout",
+            }
+        },
+    )
+    monkeypatch.delenv("CODEX_SWAP_FORCE_COLOR", raising=False)
+    args = argparse.Namespace(json=False)
+    assert cli.cmd_usage(args) == 0
+    out = capsys.readouterr().out
+    assert "\033[" not in out

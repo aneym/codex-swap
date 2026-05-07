@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `codex-swap usage` is now a multi-line, color-coded view per slot. Each slot prints a header (`slot N · plan · source`) plus a row per window with the effective percent (green/yellow/red by severity) and the explicit reset time (e.g. `resets Thu 8:35pm, in 4h`). Past resets render as `already reset` so an exhausted slot whose window has cleared is obvious. Exhausted slots get a `LIMIT REACHED — run codex-swap seed` callout in the header. ANSI is auto-suppressed when stdout is not a TTY (and via `NO_COLOR`); set `CODEX_SWAP_FORCE_COLOR=1` to force.
+
 ## 0.1.4 — 2026-05-07
 
 - Detect rate-limit-reached rollouts so a tapped-out slot is no longer mistaken for "no new data". Codex writes `primary: null, secondary: null, credits.has_credits: false` once an account hits its weekly cap; the scanner used to drop that snapshot and leave the cache frozen on the last pre-limit reading (e.g. `7d=47%`), which made the picker keep choosing an exhausted slot.
