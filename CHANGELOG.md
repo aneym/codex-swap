@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## 0.1.5 — 2026-05-07
+
 - `codex-swap usage` is now a multi-line, color-coded view per slot. Each slot prints a header (`slot N · plan · source`) plus a row per window with the effective percent (green/yellow/red by severity) and the explicit reset time (e.g. `resets Thu 8:35pm, in 4h`). Past resets render as `already reset` so an exhausted slot whose window has cleared is obvious. Exhausted slots get a `LIMIT REACHED — run codex-swap seed` callout in the header. ANSI is auto-suppressed when stdout is not a TTY (and via `NO_COLOR`); set `CODEX_SWAP_FORCE_COLOR=1` to force.
 
 ## 0.1.4 — 2026-05-07
