@@ -16,7 +16,7 @@ import sys
 
 from .codex import find_real_codex
 from .slots import current_slot, load_sequence, switch_to
-from .usage import effective_used_percent, refresh_from_rollouts
+from .usage import effective_used_percent, is_exhausted, refresh_from_rollouts
 
 # Either rate-limit window at or above this percent makes the slot a
 # "near cap" candidate — ranked below an unknown slot so cx is willing
@@ -30,11 +30,14 @@ def _slot_score(slot: str, usage: dict) -> tuple[int, float, float, int]:
     Bucket 0 — known and healthy (both windows below NEAR_CAP_PERCENT after
                decay). Preferred.
     Bucket 1 — no usage record yet (assume fresh; bias toward learning).
-    Bucket 2 — known and at/above NEAR_CAP_PERCENT after decay (last resort).
+    Bucket 2 — known and at/above NEAR_CAP_PERCENT after decay, OR explicitly
+               flagged exhausted by the most recent rollout. Last resort.
     """
     info = usage.get(slot)
     if not isinstance(info, dict):
         return (1, 0.0, 0.0, int(slot))
+    if is_exhausted(info):
+        return (2, 100.0, 100.0, int(slot))
     pri_eff = effective_used_percent(info.get("primary"))
     sec_eff = effective_used_percent(info.get("secondary"))
     pri = float(pri_eff) if pri_eff is not None else 101.0
@@ -62,7 +65,9 @@ def _label(seq: dict, slot: str, usage: dict) -> str:
         parts.append(f"5h {pri_eff:.0f}%")
     if sec_eff is not None:
         parts.append(f"7d {sec_eff:.0f}%")
-    if pri_eff is None and sec_eff is None:
+    if is_exhausted(info):
+        parts.append("limit reached")
+    elif pri_eff is None and sec_eff is None:
         parts.append("usage unknown")
     return ", ".join(parts)
 

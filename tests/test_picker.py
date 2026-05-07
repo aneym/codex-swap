@@ -158,3 +158,52 @@ def test_unknown_slots_empty_when_all_known():
     seq = {"accounts": {"1": {}, "2": {}}}
     usage = {"1": {}, "2": {}}
     assert _unknown_slots(seq, usage) == []
+
+
+# --- exhaustion handling ------------------------------------------------------
+
+
+def test_slot_score_exhausted_drops_to_worst_bucket():
+    """A slot flagged exhausted ranks below an unmeasured slot, even when its
+    last persisted percents look low."""
+    usage = {
+        "1": {
+            "primary": {"used_percent": 30.0},
+            "secondary": {"used_percent": 47.0},
+            "exhausted": True,
+        }
+    }
+    bucket, pri, sec, _ = _slot_score("1", usage)
+    assert bucket == 2
+    assert pri == 100.0
+    assert sec == 100.0
+
+
+def test_choose_avoids_exhausted_even_with_lowest_pct():
+    """The bug: slot 2's cache showed 47% and got picked despite hitting cap.
+    Once flagged exhausted, the picker must rotate away."""
+    seq = {"sequence": ["1", "2", "3"]}
+    usage = {
+        "1": {"primary": {"used_percent": 75.0}, "secondary": {"used_percent": 60.0}},
+        "2": {
+            "primary": {"used_percent": 30.0},
+            "secondary": {"used_percent": 47.0},
+            "exhausted": True,
+        },
+    }
+    # Slot 1 is healthy-ish (bucket 0); slot 3 has no record (bucket 1);
+    # slot 2 is exhausted (bucket 2). Slot 1 wins.
+    assert _choose(seq, usage) == "1"
+
+
+def test_choose_prefers_unknown_over_exhausted():
+    """An unmeasured slot beats an exhausted one — same logic as near-cap."""
+    seq = {"sequence": ["1", "2"]}
+    usage = {
+        "1": {
+            "primary": {"used_percent": 30.0},
+            "secondary": {"used_percent": 47.0},
+            "exhausted": True,
+        },
+    }
+    assert _choose(seq, usage) == "2"

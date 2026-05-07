@@ -36,6 +36,10 @@ def test_main_push_ci_auto_tags_and_publishes_release():
     assert "id-token: write" in publish
     assert "pypa/gh-action-pypi-publish" in publish
     assert "softprops/action-gh-release" in publish
-    assert "sha256sum dist/* install.sh > SHA256SUMS" in publish
+    # SHA256SUMS step changed in #7 to record bare filenames (no `dist/`
+    # prefix) so install.sh's `sha256sum -c` step finds the artifacts where
+    # it expects them.
+    assert "( cd dist && sha256sum * ) > SHA256SUMS" in publish
+    assert "sha256sum install.sh >> SHA256SUMS" in publish
     assert "install.sh" in publish
     assert "SHA256SUMS" in publish

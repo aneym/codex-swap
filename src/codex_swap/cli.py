@@ -27,7 +27,7 @@ from .slots import (
     switch_to,
     verify_all,
 )
-from .usage import effective_used_percent, load_persisted, refresh_from_rollouts
+from .usage import effective_used_percent, is_exhausted, load_persisted, refresh_from_rollouts
 
 
 def _fmt_pct(v) -> str:
@@ -86,19 +86,27 @@ def cmd_list(args) -> int:
         return 0
     usage = {} if args.no_usage else refresh_from_rollouts()
     active = current_slot(seq)
-    print(f"{'':2} {'slot':<5} {'email':<35} {'plan':<8} {'5h':>6} {'7d':>6} {'resets':>10}")
+    print(f"{'':2} {'slot':<5} {'email':<35} {'plan':<8} {'5h':>6} {'7d':>6} {'resets':>10}  notes")
     for slot in sorted(seq["accounts"], key=lambda s: int(s)):
         acc = seq["accounts"][slot]
         marker = "*" if slot == active else " "
         info = usage.get(slot, {}) if isinstance(usage, dict) else {}
         primary = info.get("primary") if isinstance(info.get("primary"), dict) else None
         secondary = info.get("secondary") if isinstance(info.get("secondary"), dict) else None
+        if is_exhausted(info):
+            pri_pct = "100%"
+            sec_pct = "100%"
+            note = "limit reached"
+        else:
+            pri_pct = _fmt_pct(effective_used_percent(primary))
+            sec_pct = _fmt_pct(effective_used_percent(secondary))
+            note = ""
         print(
             f" {marker} {slot:<5} {_account_label(acc)[:34]:<35} "
             f"{(acc.get('plan_type') or '')[:7]:<8} "
-            f"{_fmt_pct(effective_used_percent(primary)):>6} "
-            f"{_fmt_pct(effective_used_percent(secondary)):>6} "
-            f"{_fmt_resets(primary.get('resets_at') if primary else None):>10}"
+            f"{pri_pct:>6} "
+            f"{sec_pct:>6} "
+            f"{_fmt_resets(primary.get('resets_at') if primary else None):>10}  {note}"
         )
     return 0
 
@@ -214,10 +222,16 @@ def cmd_usage(args) -> int:
         primary = info.get("primary") if isinstance(info.get("primary"), dict) else None
         secondary = info.get("secondary") if isinstance(info.get("secondary"), dict) else None
         source = info.get("source") or "?"
+        if is_exhausted(info):
+            pri_str, sec_str = "100%", "100%"
+            suffix = " — limit reached, run `codex-swap seed` after the window resets"
+        else:
+            pri_str = _fmt_pct(effective_used_percent(primary))
+            sec_str = _fmt_pct(effective_used_percent(secondary))
+            suffix = ""
         print(
-            f"slot {slot}: 5h={_fmt_pct(effective_used_percent(primary))} "
-            f"7d={_fmt_pct(effective_used_percent(secondary))} "
-            f"plan={info.get('plan_type') or '—'} (via {source})"
+            f"slot {slot}: 5h={pri_str} 7d={sec_str} "
+            f"plan={info.get('plan_type') or '—'} (via {source}){suffix}"
         )
     return 0
 

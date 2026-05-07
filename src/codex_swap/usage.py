@@ -47,8 +47,45 @@ def session_id_from_path(path: Path) -> str | None:
     return "-".join(parts[-5:])
 
 
+def is_exhaustion_signal(rl: dict | None) -> bool:
+    """True when a rate_limits snapshot says the slot has hit its cap.
+
+    The Codex API drops `primary` and `secondary` to null once the binding
+    window is depleted; the depletion is announced via either
+    `credits.has_credits == false` or a non-null `rate_limit_reached_type`.
+    Treating that shape as "no data" leaves the cache frozen on the last
+    pre-limit reading, which is exactly the bug we're fixing — callers
+    should record an explicit exhaustion record instead.
+    """
+    if not isinstance(rl, dict):
+        return False
+    if rl.get("primary") is not None or rl.get("secondary") is not None:
+        return False
+    if rl.get("rate_limit_reached_type"):
+        return True
+    credits = rl.get("credits")
+    if isinstance(credits, dict) and credits.get("has_credits") is False:
+        return True
+    return False
+
+
+def _is_useful_snapshot(rl: dict | None) -> bool:
+    """A snapshot worth keeping: window data, or a clear exhaustion signal."""
+    if not isinstance(rl, dict):
+        return False
+    if rl.get("primary") or rl.get("secondary"):
+        return True
+    return is_exhaustion_signal(rl)
+
+
 def latest_rate_limits(path: Path) -> dict | None:
-    """Return the latest non-null rate_limits snapshot in a rollout file."""
+    """Return the latest meaningful rate_limits snapshot in a rollout file.
+
+    "Meaningful" means either the snapshot carries window data, or it
+    carries an exhaustion signal (`primary`/`secondary` both null but
+    `credits.has_credits == false` or `rate_limit_reached_type` set).
+    All-null snapshots with no exhaustion indicator are still skipped.
+    """
     snapshot: dict | None = None
     try:
         with path.open() as fh:
@@ -63,7 +100,7 @@ def latest_rate_limits(path: Path) -> dict | None:
                 if not isinstance(payload, dict) or payload.get("type") != "token_count":
                     continue
                 rl = payload.get("rate_limits")
-                if isinstance(rl, dict) and (rl.get("primary") or rl.get("secondary")):
+                if _is_useful_snapshot(rl):
                     snapshot = rl
     except OSError:
         return None
@@ -101,13 +138,41 @@ def session_account_map() -> dict[str, str]:
     return mapping
 
 
+def _build_record(rl: dict, mtime: float, path: Path) -> dict:
+    """Translate a rollout's rate_limits payload into a persisted record.
+
+    Healthy snapshots carry window data verbatim. Exhaustion snapshots get
+    an explicit `exhausted=True` flag plus null windows; merge fills the
+    timing info back in from the prior persisted record so display and
+    decay still know when the window is expected to clear.
+    """
+    if is_exhaustion_signal(rl):
+        return {
+            "primary": None,
+            "secondary": None,
+            "plan_type": rl.get("plan_type"),
+            "exhausted": True,
+            "exhausted_at": mtime,
+            "rate_limit_reached_type": rl.get("rate_limit_reached_type"),
+            "scanned_at": mtime,
+            "source": "rollout-exhausted",
+            "source_path": str(path),
+        }
+    return {
+        "primary": rl.get("primary"),
+        "secondary": rl.get("secondary"),
+        "plan_type": rl.get("plan_type"),
+        "scanned_at": mtime,
+        "source": "rollout",
+        "source_path": str(path),
+    }
+
+
 def scan_rollouts_for_usage() -> dict[str, dict]:
     """Find usage data per slot from local rollouts.
 
-    Returns {slot: record} for every slot whose latest rollout had rate_limits.
-    A "record" is the unified shape used by the persisted store:
-
-        {primary, secondary, plan_type, scanned_at, source, source_path}
+    Returns {slot: record} for every slot whose latest rollout had a
+    meaningful rate_limits snapshot — including exhaustion signals.
     """
     seq = read_json(SEQUENCE_PATH) or {}
     accounts = seq.get("accounts", {}) or {}
@@ -136,14 +201,7 @@ def scan_rollouts_for_usage() -> dict[str, dict]:
             mtime = path.stat().st_mtime
         except OSError:
             mtime = time.time()
-        found[slot] = {
-            "primary": rl.get("primary"),
-            "secondary": rl.get("secondary"),
-            "plan_type": rl.get("plan_type"),
-            "scanned_at": mtime,
-            "source": "rollout",
-            "source_path": str(path),
-        }
+        found[slot] = _build_record(rl, mtime, path)
         if len(found) == len(by_account):
             break
     return found
@@ -167,12 +225,34 @@ def save_persisted(data: dict[str, dict]) -> None:
     atomic_write_json(USAGE_CACHE, payload)
 
 
+def _merge_record(prior: dict, new: dict) -> dict:
+    """Splice prior timing/plan info onto an exhaustion record.
+
+    A healthy update fully replaces the prior record (the percent and
+    `resets_at` from the new rollout supersede whatever was there). An
+    exhaustion update has null windows by construction, so we splice the
+    last known `primary`/`secondary` and `plan_type` from the prior
+    record so display and decay still have the timing details to work
+    with.
+    """
+    if not new.get("exhausted"):
+        return new
+    out = dict(new)
+    for key in ("primary", "secondary"):
+        if out.get(key) is None and isinstance(prior.get(key), dict):
+            out[key] = dict(prior[key])
+    if not out.get("plan_type") and prior.get("plan_type"):
+        out["plan_type"] = prior["plan_type"]
+    return out
+
+
 def merge_into_persisted(updates: dict[str, dict]) -> dict[str, dict]:
     """Merge per-slot updates into the persisted store; higher scanned_at wins.
 
     Slots not present in `updates` keep their existing record. The picker
     therefore never loses sight of a slot just because the latest rescan
-    didn't surface it.
+    didn't surface it. Exhaustion updates inherit prior window timing via
+    `_merge_record` so the display can still report when the cap clears.
     """
     persisted = load_persisted()
     changed = False
@@ -183,7 +263,7 @@ def merge_into_persisted(updates: dict[str, dict]) -> dict[str, dict]:
         new_ts = float(new_rec.get("scanned_at") or 0)
         old_ts = float(existing.get("scanned_at") or 0)
         if new_ts >= old_ts:
-            persisted[slot] = new_rec
+            persisted[slot] = _merge_record(existing, new_rec)
             changed = True
     if changed:
         save_persisted(persisted)
@@ -227,7 +307,9 @@ def effective_record(rec: dict | None, now: float | None = None) -> dict | None:
     """Return a copy of `rec` with decayed `used_percent` per window.
 
     The decayed value is written to a parallel `used_percent_effective` key
-    so callers can compare to the raw value if needed.
+    so callers can compare to the raw value if needed. The exhausted flag
+    is left intact — clearing it requires a fresh successful rollout, not
+    just a window-reset timestamp passing.
     """
     if not isinstance(rec, dict):
         return None
@@ -245,6 +327,11 @@ def effective_record(rec: dict | None, now: float | None = None) -> dict | None:
                 new_window["window_reset"] = True
         out[key] = new_window
     return out
+
+
+def is_exhausted(rec: dict | None) -> bool:
+    """Convenience: did the last rollout for this slot show it tapped out?"""
+    return bool(isinstance(rec, dict) and rec.get("exhausted"))
 
 
 # --- public refresh entry points ---------------------------------------------

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## 0.1.4 — 2026-05-07
+
+- Detect rate-limit-reached rollouts so a tapped-out slot is no longer mistaken for "no new data". Codex writes `primary: null, secondary: null, credits.has_credits: false` once an account hits its weekly cap; the scanner used to drop that snapshot and leave the cache frozen on the last pre-limit reading (e.g. `7d=47%`), which made the picker keep choosing an exhausted slot.
+- Persist exhaustion as an explicit `exhausted: true` flag on the slot record. Merge preserves prior `primary`/`secondary` window timing so the display can still report when the cap is expected to clear, and a fresh successful rollout fully replaces the exhaustion record.
+- The picker drops exhausted slots into the worst bucket (synthetic `100%/100%`) so they rank below an unmeasured slot — same precedence as a known-near-cap slot.
+- `codex-swap usage` and `codex-swap list` now surface "limit reached" inline so a tapped-out slot is obvious at a glance.
+- Fix the `test_main_push_ci_auto_tags_and_publishes_release` regression that lingered after #7 split SHA256SUMS into a `cd dist` + append step.
+
 ## 0.1.3 — 2026-05-05
 
 - Make the per-slot usage store durable: rollout scans now merge new findings into the persisted cache instead of overwriting it, so a slot's record is kept until something fresher replaces it.
