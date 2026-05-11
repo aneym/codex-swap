@@ -15,6 +15,12 @@ import os
 import sys
 
 from .codex import find_real_codex
+from .policy import (
+    DEFAULT_SPILLOVER_PRIMARY_PERCENT,
+    DEFAULT_SPILLOVER_SECONDARY_PERCENT,
+    load_policy,
+    policy_enabled,
+)
 from .slots import current_slot, load_sequence, switch_to
 from .usage import effective_used_percent, is_exhausted, refresh_from_rollouts
 
@@ -46,11 +52,51 @@ def _slot_score(slot: str, usage: dict) -> tuple[int, float, float, int]:
     return (bucket, pri, sec, int(slot))
 
 
-def _choose(seq: dict, usage: dict) -> str | None:
+def _policy_score(slot: str, usage: dict, reserve_slots: set[str]) -> tuple[int, float, float, int]:
+    bucket, pri, sec, slot_num = _slot_score(slot, usage)
+    exhausted = is_exhausted(usage.get(slot))
+    if slot not in reserve_slots:
+        if exhausted:
+            return (6, pri, sec, slot_num)
+        return (bucket if bucket < 2 else 4, pri, sec, slot_num)
+    if exhausted:
+        return (7, pri, sec, slot_num)
+    if bucket == 0:
+        return (2, pri, sec, slot_num)
+    if bucket == 1:
+        return (3, pri, sec, slot_num)
+    return (5, pri, sec, slot_num)
+
+
+def _primary_is_usable(slot: str, usage: dict, policy: dict) -> bool:
+    info = usage.get(slot)
+    if is_exhausted(info):
+        return False
+    if not isinstance(info, dict):
+        return True
+
+    pri = effective_used_percent(info.get("primary"))
+    sec = effective_used_percent(info.get("secondary"))
+    pri = 0.0 if pri is None else float(pri)
+    sec = 0.0 if sec is None else float(sec)
+    pri_limit = float(policy.get("spillover_primary_percent") or DEFAULT_SPILLOVER_PRIMARY_PERCENT)
+    sec_limit = float(policy.get("spillover_secondary_percent") or DEFAULT_SPILLOVER_SECONDARY_PERCENT)
+    return pri < pri_limit and sec < sec_limit
+
+
+def _choose(seq: dict, usage: dict, policy: dict | None = None) -> str | None:
     sequence = [str(s) for s in seq.get("sequence", [])]
     if not sequence:
         return None
-    return min(sequence, key=lambda s: _slot_score(s, usage))
+    if not policy_enabled(policy):
+        return min(sequence, key=lambda s: _slot_score(s, usage))
+
+    primary = str(policy.get("primary_slot") or "")
+    if primary in sequence and _primary_is_usable(primary, usage, policy):
+        return primary
+
+    reserves = {str(s) for s in policy.get("reserve_slots", [])}
+    return min(sequence, key=lambda s: _policy_score(s, usage, reserves))
 
 
 def _label(seq: dict, slot: str, usage: dict) -> str:
@@ -89,9 +135,10 @@ def maybe_switch(skip_auto: bool = False, pinned_slot: str | None = None) -> Non
     # Cheap rollout-scan merges any new findings into the persisted store.
     # Slots without a fresh rollout keep their existing record (with decay).
     usage = refresh_from_rollouts()
+    policy = load_policy()
 
     cur = current_slot(seq)
-    target = str(pinned_slot) if pinned_slot else _choose(seq, usage)
+    target = str(pinned_slot) if pinned_slot else _choose(seq, usage, policy)
     if not target:
         return
     if target not in seq.get("accounts", {}):

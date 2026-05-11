@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add `codex-swap policy` for sticky-primary routing. A configured primary slot now carries normal `cx` launches until its 5-hour or 7-day usage crosses configurable spillover thresholds; reserve slots are avoided until regular capacity is tapped out.
+- Add `codex-swap anchor <slot>` to intentionally send one tiny isolated probe when you want a reset weekly window to start at a chosen time of day.
+
 ## 0.1.5 — 2026-05-07
 
 - `codex-swap usage` is now a multi-line, color-coded view per slot. Each slot prints a header (`slot N · plan · source`) plus a row per window with the effective percent (green/yellow/red by severity) and the explicit reset time (e.g. `resets Thu 8:35pm, in 4h`). Past resets render as `already reset` so an exhausted slot whose window has cleared is obvious. Exhausted slots get a `LIMIT REACHED — run codex-swap seed` callout in the header. ANSI is auto-suppressed when stdout is not a TTY (and via `NO_COLOR`); set `CODEX_SWAP_FORCE_COLOR=1` to force.

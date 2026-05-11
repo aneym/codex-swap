@@ -151,3 +151,71 @@ def test_cmd_usage_omits_color_codes_when_not_a_tty(monkeypatch, capsys):
     assert cli.cmd_usage(args) == 0
     out = capsys.readouterr().out
     assert "\033[" not in out
+
+
+def test_cmd_policy_sets_primary_and_reserve(monkeypatch, capsys):
+    saved = []
+    monkeypatch.setattr(
+        cli,
+        "load_sequence",
+        lambda: {
+            "sequence": ["1", "2", "3"],
+            "accounts": {
+                "1": {"email": "one@example.com"},
+                "2": {"email": "two@example.com"},
+                "3": {"email": "three@example.com"},
+            },
+        },
+    )
+    monkeypatch.setattr(cli, "load_policy", lambda: {})
+
+    def fake_save(policy):
+        saved.append(policy)
+        return {
+            "primary_slot": policy["primary_slot"],
+            "reserve_slots": policy["reserve_slots"],
+            "spillover_primary_percent": policy["spillover_primary_percent"],
+            "spillover_secondary_percent": policy["spillover_secondary_percent"],
+        }
+
+    monkeypatch.setattr(cli, "save_policy", fake_save)
+    args = argparse.Namespace(
+        primary="one@example.com",
+        reserve=["3"],
+        spillover_5h=75.0,
+        spillover_7d=90.0,
+        clear=False,
+    )
+    assert cli.cmd_policy(args) == 0
+    assert saved == [
+        {
+            "primary_slot": "1",
+            "reserve_slots": ["3"],
+            "spillover_primary_percent": 75.0,
+            "spillover_secondary_percent": 90.0,
+        }
+    ]
+    out = capsys.readouterr().out
+    assert "Routing policy: sticky" in out
+    assert "primary: 1" in out
+    assert "reserves: 3" in out
+
+
+def test_cmd_anchor_uses_isolated_seed_for_one_slot(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(
+        cli,
+        "load_sequence",
+        lambda: {"accounts": {"2": {"email": "two@example.com"}}, "sequence": ["2"]},
+    )
+
+    def fake_seed(slots, *, max_concurrency, probe_timeout):
+        calls.append((slots, max_concurrency, probe_timeout))
+        return [("2", "ok", "auth ok")]
+
+    monkeypatch.setattr(cli, "seed_slots", fake_seed)
+    args = argparse.Namespace(target="two@example.com", timeout=12.0)
+    assert cli.cmd_anchor(args) == 0
+    assert calls == [(["2"], 1, 12.0)]
+    out = capsys.readouterr().out
+    assert "Anchoring sends one tiny isolated Codex probe" in out

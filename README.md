@@ -23,6 +23,7 @@ If you have multiple Codex Pro accounts and you keep hitting the 5-hour cap on w
 - Keeps a durable per-slot usage store (5-hour + 7-day windows) and decays each window automatically when the API's `resets_at` time passes — so the picker stays accurate without re-measuring.
 - On each `cx` launch, does a cheap rollout scan and merges any fresh findings into that store. Slots not seen in this scan keep their previous record.
 - Swaps `auth.json` to the slot with the lowest usage, then `exec`s `codex`.
+- Optionally keeps a sticky primary account and reserve accounts, so normal work stays on one subscription until its 5-hour or weekly window is near tapped out.
 - Snapshots back any refreshed tokens so the rotation chain never breaks.
 - `codex-swap seed` populates usage for every slot in parallel via isolated `CODEX_HOME`s — one-time setup; no re-seeding on every launch.
 
@@ -112,6 +113,28 @@ cx exec "fix bug" # all codex args are forwarded
 
 That's the whole interface.
 
+If you want one subscription to carry normal work and keep another as reserve:
+
+```bash
+codex-swap policy --primary 1 --reserve 4
+cx
+```
+
+With a policy set, `cx` sticks to the primary slot until its 5-hour usage reaches 80% or its 7-day usage reaches 95%. It then spills over to the lowest-usage non-reserve slot. Reserve slots are used only after regular capacity is tapped out. Tune the thresholds if needed:
+
+```bash
+codex-swap policy --spillover-5h 75 --spillover-7d 90
+codex-swap policy --clear
+```
+
+To intentionally start a weekly window early in the day, run one tiny isolated probe on the account you plan to use that week:
+
+```bash
+codex-swap anchor 1
+```
+
+Only do this after that slot's weekly window has reset; it spends a small amount of quota and should not be run for every account every morning.
+
 ## When something goes wrong
 
 If a slot's refresh token dies (you ran `codex logout` somewhere, the token aged out, etc.), `cx` will still try to use it and codex will print "refresh token was already used" or similar. Fix everything in one shot:
@@ -143,6 +166,8 @@ codex-swap reauth 1     # opens browser, log in to that slot's account
 | `codex-swap verify`                   | Test every slot with a real `codex exec` call                                   |
 | `codex-swap usage`                    | Refresh & print the per-slot usage cache (decay-aware)                          |
 | `codex-swap seed [<slot>...]`         | Probe slots in parallel (isolated `CODEX_HOME`) to populate usage data          |
+| `codex-swap anchor <slot>`            | Send one tiny isolated probe to intentionally start a slot's weekly window      |
+| `codex-swap policy [...]`             | Show, set, or clear sticky-primary and reserve-slot routing                     |
 | `codex-swap stash`                    | Snapshot live `auth.json` back into its slot                                    |
 | `codex-swap purge --yes`              | Delete all codex-swap state                                                     |
 
@@ -189,6 +214,13 @@ The picker sorts in three buckets, lower wins:
 
 Within a bucket, ties break on `(5h%, 7d%, slot#)`.
 
+When `codex-swap policy` has a primary or reserve slot configured, the picker changes from pure lowest-usage routing to sticky routing:
+
+1. If the primary slot is usable, use it even if another slot has lower usage.
+2. Spill over when the primary is exhausted, or when its 5-hour / 7-day usage reaches the configured thresholds.
+3. Prefer regular spillover slots before reserve slots.
+4. Use reserve slots before returning to a known capped regular slot.
+
 ## Critical: never run `codex logout`
 
 `codex logout` calls a server-side revoke that **invalidates the refresh token** at the OAuth provider. Every other slot whose snapshot pre-dates that revoke is then permanently dead. codex-swap's onboarding and reauth flows use `rm ~/.codex/auth.json` instead — same effect locally, no server-side blast radius.
@@ -209,6 +241,7 @@ ChatGPT issues single-use refresh tokens that rotate on every successful refresh
 ├── accounts/<N>/auth.json   # per-slot snapshots (chmod 600)
 ├── sequence.json            # slot order + email/account_id metadata
 ├── state.json               # last switched slot + timestamp
+├── policy.json              # optional sticky-primary / reserve-slot policy
 └── cache/usage.json         # durable per-slot usage records (with resets_at decay)
 ```
 

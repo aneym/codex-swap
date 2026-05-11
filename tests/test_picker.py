@@ -7,6 +7,7 @@ import time
 from codex_swap.launcher import (
     NEAR_CAP_PERCENT,
     _choose,
+    _policy_score,
     _slot_score,
     _unknown_slots,
 )
@@ -207,3 +208,102 @@ def test_choose_prefers_unknown_over_exhausted():
         },
     }
     assert _choose(seq, usage) == "2"
+
+
+# --- sticky policy ------------------------------------------------------------
+
+
+def test_choose_sticky_policy_prefers_primary_over_lower_usage_slot():
+    seq = {"sequence": ["1", "2", "3"]}
+    usage = {
+        "1": {"primary": {"used_percent": 50.0}, "secondary": {"used_percent": 80.0}},
+        "2": {"primary": {"used_percent": 1.0}, "secondary": {"used_percent": 1.0}},
+    }
+    policy = {
+        "primary_slot": "1",
+        "reserve_slots": [],
+        "spillover_primary_percent": 80.0,
+        "spillover_secondary_percent": 95.0,
+    }
+    assert _choose(seq, usage, policy) == "1"
+
+
+def test_choose_sticky_policy_spills_over_when_primary_5h_is_high():
+    seq = {"sequence": ["1", "2"]}
+    usage = {
+        "1": {"primary": {"used_percent": 80.0}, "secondary": {"used_percent": 20.0}},
+        "2": {"primary": {"used_percent": 40.0}, "secondary": {"used_percent": 20.0}},
+    }
+    policy = {
+        "primary_slot": "1",
+        "reserve_slots": [],
+        "spillover_primary_percent": 80.0,
+        "spillover_secondary_percent": 95.0,
+    }
+    assert _choose(seq, usage, policy) == "2"
+
+
+def test_choose_sticky_policy_spills_over_when_primary_7d_is_near_done():
+    seq = {"sequence": ["1", "2"]}
+    usage = {
+        "1": {"primary": {"used_percent": 10.0}, "secondary": {"used_percent": 95.0}},
+        "2": {"primary": {"used_percent": 40.0}, "secondary": {"used_percent": 20.0}},
+    }
+    policy = {
+        "primary_slot": "1",
+        "reserve_slots": [],
+        "spillover_primary_percent": 80.0,
+        "spillover_secondary_percent": 95.0,
+    }
+    assert _choose(seq, usage, policy) == "2"
+
+
+def test_choose_sticky_policy_uses_primary_when_usage_unknown():
+    seq = {"sequence": ["1", "2"]}
+    policy = {
+        "primary_slot": "1",
+        "reserve_slots": [],
+        "spillover_primary_percent": 80.0,
+        "spillover_secondary_percent": 95.0,
+    }
+    assert _choose(seq, {}, policy) == "1"
+
+
+def test_policy_score_keeps_healthy_reserve_ahead_of_capped_regular_slot():
+    usage = {
+        "1": {"primary": {"used_percent": 95.0}, "secondary": {"used_percent": 30.0}},
+        "2": {"primary": {"used_percent": 2.0}, "secondary": {"used_percent": 2.0}},
+    }
+    regular_score = _policy_score("1", usage, {"2"})
+    reserve_score = _policy_score("2", usage, {"2"})
+    assert reserve_score < regular_score
+
+
+def test_policy_score_keeps_near_cap_reserve_ahead_of_exhausted_regular_slot():
+    usage = {
+        "1": {
+            "primary": {"used_percent": 20.0},
+            "secondary": {"used_percent": 20.0},
+            "exhausted": True,
+        },
+        "2": {"primary": {"used_percent": 90.0}, "secondary": {"used_percent": 20.0}},
+    }
+    regular_score = _policy_score("1", usage, {"2"})
+    reserve_score = _policy_score("2", usage, {"2"})
+    assert reserve_score < regular_score
+
+
+def test_choose_policy_avoids_reserve_when_regular_slot_is_healthy():
+    seq = {"sequence": ["1", "2", "3"]}
+    usage = {
+        "1": {"primary": {"used_percent": 90.0}, "secondary": {"used_percent": 20.0}},
+        "2": {"primary": {"used_percent": 30.0}, "secondary": {"used_percent": 30.0}},
+        "3": {"primary": {"used_percent": 1.0}, "secondary": {"used_percent": 1.0}},
+    }
+    policy = {
+        "primary_slot": "1",
+        "reserve_slots": ["3"],
+        "spillover_primary_percent": 80.0,
+        "spillover_secondary_percent": 95.0,
+    }
+    assert _choose(seq, usage, policy) == "2"

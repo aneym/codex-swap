@@ -14,6 +14,7 @@ from .auth import auth_fingerprint, auth_identity, current_auth
 from .launcher import launch
 from .onboard import onboard
 from .paths import AUTH_PATH
+from .policy import clear_policy, load_policy, policy_enabled, save_policy
 from .slots import (
     add_auth_file,
     add_current,
@@ -381,6 +382,79 @@ def cmd_seed(args) -> int:
     return 1 if failures else 0
 
 
+def cmd_anchor(args) -> int:
+    seq = load_sequence()
+    slot = resolve_slot(seq, args.target)
+    if not slot:
+        sys.stderr.write(f"codex-swap: unknown slot '{args.target}'\n")
+        return 1
+    print(
+        "Anchoring sends one tiny isolated Codex probe. Use it only when you "
+        "want this slot's weekly window to start now."
+    )
+    results = seed_slots([slot], max_concurrency=1, probe_timeout=args.timeout)
+    if not results:
+        return 1
+    _, status, detail = results[0]
+    print(f"slot {slot}: {status} — {detail}")
+    return 0 if status == "ok" else 1
+
+
+def cmd_policy(args) -> int:
+    seq = load_sequence()
+    current = load_policy()
+    next_policy = dict(current)
+
+    if args.clear:
+        clear_policy()
+        print("Cleared routing policy. cx will use lowest-usage routing.")
+        return 0
+
+    if args.primary:
+        slot = resolve_slot(seq, args.primary)
+        if not slot:
+            sys.stderr.write(f"codex-swap: unknown slot '{args.primary}'\n")
+            return 1
+        next_policy["primary_slot"] = slot
+
+    if args.reserve is not None:
+        reserves = []
+        for target in args.reserve:
+            slot = resolve_slot(seq, target)
+            if not slot:
+                sys.stderr.write(f"codex-swap: unknown slot '{target}'\n")
+                return 1
+            reserves.append(slot)
+        next_policy["reserve_slots"] = reserves
+
+    if args.spillover_5h is not None:
+        next_policy["spillover_primary_percent"] = args.spillover_5h
+    if args.spillover_7d is not None:
+        next_policy["spillover_secondary_percent"] = args.spillover_7d
+
+    changed = (
+        args.primary
+        or args.reserve is not None
+        or args.spillover_5h is not None
+        or args.spillover_7d is not None
+    )
+    policy = save_policy(next_policy) if changed else current
+    _print_policy(policy)
+    return 0
+
+
+def _print_policy(policy: dict) -> None:
+    if not policy_enabled(policy):
+        print("Routing policy: lowest-usage")
+        return
+    print("Routing policy: sticky")
+    print(f"  primary: {policy.get('primary_slot') or '—'}")
+    reserves = ", ".join(policy.get("reserve_slots") or [])
+    print(f"  reserves: {reserves or '—'}")
+    print(f"  spillover 5h: {policy.get('spillover_primary_percent'):.0f}%")
+    print(f"  spillover 7d: {policy.get('spillover_secondary_percent'):.0f}%")
+
+
 def cmd_launch(args) -> int:
     launch(args.codex_args, skip_auto=args.skip_auto, pinned_slot=args.slot)
     return 0  # unreachable; launch execs
@@ -463,6 +537,34 @@ def build_parser() -> argparse.ArgumentParser:
     sp_seed.add_argument("--concurrency", type=int, default=4, help="Max parallel probes (default: 4)")
     sp_seed.add_argument("--timeout", type=float, default=30.0, help="Per-probe timeout in seconds (default: 30)")
     sp_seed.set_defaults(func=cmd_seed)
+
+    sp_anchor = sub.add_parser(
+        "anchor",
+        help="Send one tiny probe on a slot to start its weekly window intentionally",
+    )
+    sp_anchor.add_argument("target", help="slot number, email, or account_id")
+    sp_anchor.add_argument("--timeout", type=float, default=30.0, help="Probe timeout in seconds")
+    sp_anchor.set_defaults(func=cmd_anchor)
+
+    sp_policy = sub.add_parser("policy", help="Show or update sticky routing policy")
+    sp_policy.add_argument("--primary", help="Preferred slot for normal work")
+    sp_policy.add_argument(
+        "--reserve",
+        nargs="*",
+        help="Reserve slots to avoid until regular capacity is tapped out",
+    )
+    sp_policy.add_argument(
+        "--spillover-5h",
+        type=float,
+        help="Use another slot when primary 5h usage reaches this percent",
+    )
+    sp_policy.add_argument(
+        "--spillover-7d",
+        type=float,
+        help="Use another slot when primary 7d usage reaches this percent",
+    )
+    sp_policy.add_argument("--clear", action="store_true", help="Return to lowest-usage routing")
+    sp_policy.set_defaults(func=cmd_policy)
 
     sp_launch = sub.add_parser("launch", help="Pick lowest-usage slot and exec codex")
     sp_launch.add_argument("--slot", help="Pin a specific slot")

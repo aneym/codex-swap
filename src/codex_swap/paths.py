@@ -19,5 +19,6 @@ ACCOUNTS_DIR = SWAP_ROOT / "accounts"
 SEQUENCE_PATH = SWAP_ROOT / "sequence.json"
 USAGE_CACHE = SWAP_ROOT / "cache" / "usage.json"
 STATE_PATH = SWAP_ROOT / "state.json"
+POLICY_PATH = SWAP_ROOT / "policy.json"
 
 USAGE_CACHE_TTL_SECONDS = 60
