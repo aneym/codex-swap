@@ -1,16 +1,40 @@
-"""Tests for the slot scoring & picker logic — pure functions, no IO."""
+"""Tests for the slot scoring & picker logic — pure functions, no IO.
+
+Uses the codex provider as the test subject; the bucketing logic is identical
+for any provider.
+"""
 
 from __future__ import annotations
 
 import time
 
-from codex_swap.launcher import (
-    NEAR_CAP_PERCENT,
-    _choose,
-    _policy_score,
-    _slot_score,
+from swap.core.launcher import (
+    _policy_score as _core_policy_score,
+)
+from swap.core.launcher import (
+    _slot_score as _core_slot_score,
+)
+from swap.core.launcher import (
     _unknown_slots,
 )
+from swap.core.launcher import (
+    choose as _core_choose,
+)
+from swap.providers.codex import CODEX
+
+NEAR_CAP_PERCENT = CODEX.near_cap_percent
+
+
+def _slot_score(slot, usage):
+    return _core_slot_score(CODEX, slot, usage)
+
+
+def _policy_score(slot, usage, reserve_slots):
+    return _core_policy_score(CODEX, slot, usage, reserve_slots)
+
+
+def _choose(seq, usage, policy=None):
+    return _core_choose(CODEX, seq, usage, policy)
 
 
 def test_slot_score_unknown_usage_treated_as_fresh():

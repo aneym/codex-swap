@@ -1,24 +1,44 @@
-"""Well-known filesystem paths for codex-swap and Codex."""
+"""Compat shim — re-export the original `codex_swap.paths` constants.
+
+Resolves Codex paths at import time. New code should call
+`swap.core.paths.provider_paths('codex')` instead.
+"""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
+from swap.core.paths import provider_paths
+from swap.providers.codex.auth import AUTH_PATH
+
 HOME = Path.home()
 
-# Codex CLI's home (overridable)
 CODEX_HOME = Path(os.environ.get("CODEX_HOME") or HOME / ".codex")
-AUTH_PATH = CODEX_HOME / "auth.json"
 SESSIONS_DIRS = [CODEX_HOME / "sessions", CODEX_HOME / "archived_sessions"]
 LOGS_DB = CODEX_HOME / "logs_2.sqlite"
 
-# codex-swap's own state — overridable for testing
-SWAP_ROOT = Path(os.environ.get("CODEX_SWAP_ROOT") or HOME / ".codex-swap")
-ACCOUNTS_DIR = SWAP_ROOT / "accounts"
-SEQUENCE_PATH = SWAP_ROOT / "sequence.json"
-USAGE_CACHE = SWAP_ROOT / "cache" / "usage.json"
-STATE_PATH = SWAP_ROOT / "state.json"
-POLICY_PATH = SWAP_ROOT / "policy.json"
+_paths = provider_paths("codex")
+SWAP_ROOT = _paths["root"]
+ACCOUNTS_DIR = _paths["accounts_dir"]
+SEQUENCE_PATH = _paths["sequence"]
+USAGE_CACHE = _paths["usage_cache"]
+STATE_PATH = _paths["state"]
+POLICY_PATH = _paths["policy"]
 
 USAGE_CACHE_TTL_SECONDS = 60
+
+__all__ = [
+    "ACCOUNTS_DIR",
+    "AUTH_PATH",
+    "CODEX_HOME",
+    "HOME",
+    "LOGS_DB",
+    "POLICY_PATH",
+    "SEQUENCE_PATH",
+    "SESSIONS_DIRS",
+    "STATE_PATH",
+    "SWAP_ROOT",
+    "USAGE_CACHE",
+    "USAGE_CACHE_TTL_SECONDS",
+]

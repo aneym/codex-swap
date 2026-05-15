@@ -1,67 +1,51 @@
-"""Sticky routing policy for the Codex launcher."""
+"""Compat shim — re-export from `swap.core.policy` with codex paths."""
 
 from __future__ import annotations
 
-from .auth import atomic_write_json, read_json
-from .paths import POLICY_PATH
-
-DEFAULT_SPILLOVER_PRIMARY_PERCENT = 80.0
-DEFAULT_SPILLOVER_SECONDARY_PERCENT = 95.0
-
-
-def load_policy() -> dict:
-    raw = read_json(POLICY_PATH) or {}
-    if not isinstance(raw, dict):
-        return {}
-    return _normalize(raw)
-
-
-def save_policy(policy: dict) -> dict:
-    normalized = _normalize(policy)
-    POLICY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_json(POLICY_PATH, normalized)
-    return normalized
-
-
-def clear_policy() -> None:
-    try:
-        POLICY_PATH.unlink()
-    except FileNotFoundError:
-        pass
+from swap.core.paths import provider_paths
+from swap.core.policy import (
+    DEFAULT_SPILLOVER_PRIMARY_PERCENT,
+    DEFAULT_SPILLOVER_SECONDARY_PERCENT,
+    _normalize,
+    _pct,
+    _slot_sort_key,
+    policy_enabled,
+)
+from swap.core.policy import (
+    clear_policy as _core_clear_policy,
+)
+from swap.core.policy import (
+    load_policy as _core_load_policy,
+)
+from swap.core.policy import (
+    save_policy as _core_save_policy,
+)
 
 
-def policy_enabled(policy: dict | None) -> bool:
-    return bool(policy and (policy.get("primary_slot") or policy.get("reserve_slots")))
+def _policy_path():
+    return provider_paths("codex")["policy"]
 
 
-def _normalize(raw: dict) -> dict:
-    primary = raw.get("primary_slot")
-    reserve_slots = raw.get("reserve_slots") or []
-    if isinstance(reserve_slots, str):
-        reserve_slots = [reserve_slots]
-
-    out: dict = {
-        "primary_slot": str(primary) if primary not in (None, "") else None,
-        "reserve_slots": sorted({str(s) for s in reserve_slots if str(s)}, key=_slot_sort_key),
-        "spillover_primary_percent": _pct(
-            raw.get("spillover_primary_percent"),
-            DEFAULT_SPILLOVER_PRIMARY_PERCENT,
-        ),
-        "spillover_secondary_percent": _pct(
-            raw.get("spillover_secondary_percent"),
-            DEFAULT_SPILLOVER_SECONDARY_PERCENT,
-        ),
-    }
-    return out
+def load_policy():
+    return _core_load_policy(_policy_path())
 
 
-def _pct(value, default: float) -> float:
-    try:
-        pct = float(value)
-    except (TypeError, ValueError):
-        return default
-    return max(0.0, min(100.0, pct))
+def save_policy(policy):
+    return _core_save_policy(_policy_path(), policy)
 
 
-def _slot_sort_key(slot: str) -> tuple[int, str]:
-    return (0, f"{int(slot):08d}") if slot.isdigit() else (1, slot)
+def clear_policy():
+    _core_clear_policy(_policy_path())
+
+
+__all__ = [
+    "DEFAULT_SPILLOVER_PRIMARY_PERCENT",
+    "DEFAULT_SPILLOVER_SECONDARY_PERCENT",
+    "_normalize",
+    "_pct",
+    "_slot_sort_key",
+    "clear_policy",
+    "load_policy",
+    "policy_enabled",
+    "save_policy",
+]

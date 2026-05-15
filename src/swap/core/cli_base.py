@@ -1,126 +1,43 @@
-"""Compatibility shim mirroring the original `codex_swap.cli` surface.
+"""Provider-agnostic argparse front-end.
 
-The implementation lives in `swap.core.cli_base` and `swap.providers.codex.cli`.
-This module re-binds the symbols used by tests and external callers so
-monkeypatching keeps working.
-
-Tests historically import `codex_swap.cli` and patch:
-- `cli.launch`
-- `cli.refresh_from_rollouts`
-- `cli.load_sequence`, `cli.load_policy`, `cli.save_policy`
-- `cli.seed_slots`
-
-The handler functions below read those names off this module at call time, so
-patches applied via `monkeypatch.setattr(cli, ...)` work as before.
+`build_parser(provider)` constructs a parser exposing the generic set of
+subcommands; provider-specific extras are mounted via `provider.extra_commands`.
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime as _dt
-import os
 import sys
 import time
 from pathlib import Path
 
-from swap import __version__
-from swap.core.launcher import launch as _core_launch
-from swap.core.migrate import run_all_migrations
-from swap.core.paths import provider_paths
-from swap.core.policy import (
-    clear_policy as _clear_policy_path,
-)
-from swap.core.policy import (
-    load_policy as _load_policy_path,
-)
-from swap.core.policy import (
+from .. import __version__
+from .launcher import launch as core_launch
+from .paths import provider_paths
+from .policy import (
+    clear_policy,
+    load_policy,
     policy_enabled,
+    save_policy,
 )
-from swap.core.policy import (
-    save_policy as _save_policy_path,
-)
-from swap.core.reauth import reauth as _core_reauth
-from swap.core.reauth import reconnect_broken, verify_all
-from swap.core.sequence import load_sequence as _load_sequence_path
-from swap.core.sequence import resolve_slot
-from swap.core.slots import (
-    add_auth_file as _core_add_auth_file,
-)
-from swap.core.slots import (
+from .provider import Provider
+from .reauth import reauth as core_reauth
+from .reauth import reconnect_broken, verify_all
+from .sequence import load_sequence, resolve_slot
+from .slots import (
+    add_auth_file,
     add_current,
     current_slot,
     rotate,
+    seed_slots,
     stash_active,
     switch_to,
 )
-from swap.core.slots import (
-    remove as _core_remove,
+from .slots import (
+    remove as remove_slot,
 )
-from swap.core.slots import (
-    seed_slots as _core_seed_slots,
-)
-from swap.core.style import Style as _Style
-from swap.core.style import color_pct as _color_pct
-from swap.core.style import supports_color as _supports_color
-from swap.providers.codex import CODEX as _CODEX
-from swap.providers.codex.auth import (
-    AUTH_PATH,
-    auth_fingerprint,
-    auth_identity,
-    current_auth,
-)
-from swap.providers.codex.usage import (
-    effective_used_percent,
-    is_exhausted,
-    load_persisted,
-    refresh_from_rollouts,
-)
-
-# --- module-level names that tests monkeypatch -------------------------------
-# Tests do `monkeypatch.setattr(cli, "load_sequence", lambda: ...)` etc. The
-# handlers below read these names off this module, so patches apply.
-
-def load_sequence(*args, **kwargs):
-    return _load_sequence_path(_paths()["sequence"])
-
-
-def load_policy(*args, **kwargs):
-    return _load_policy_path(_paths()["policy"])
-
-
-def save_policy(policy: dict):
-    return _save_policy_path(_paths()["policy"], policy)
-
-
-def clear_policy():
-    _clear_policy_path(_paths()["policy"])
-
-
-def seed_slots(slots, *, max_concurrency=4, probe_timeout=30.0):
-    return _core_seed_slots(
-        _CODEX,
-        _paths(),
-        slots,
-        max_concurrency=max_concurrency,
-        probe_timeout=probe_timeout,
-    )
-
-
-def launch(args, *, skip_auto=False, pinned_slot=None):
-    return _core_launch(
-        _CODEX,
-        _paths(),
-        args,
-        skip_auto=skip_auto,
-        pinned_slot=pinned_slot,
-    )
-
-
-# --- helpers (verbatim from the old cli.py) ----------------------------------
-
-
-def _paths():
-    return provider_paths("codex")
+from .style import Style, color_pct, supports_color
 
 
 def _fmt_pct(v) -> str:
@@ -145,6 +62,7 @@ def _fmt_resets(ts) -> str:
 
 
 def _fmt_resets_at(ts) -> str:
+    """Long-form reset string: 'resets Thu 6:35pm, in 4h' or 'already reset'."""
     try:
         ts_int = int(ts)
     except (TypeError, ValueError):
@@ -177,40 +95,54 @@ def _account_label(acc: dict) -> str:
     )
 
 
-# --- command handlers ---------------------------------------------------------
+class CommandContext:
+    """Bag of (provider, paths) threaded through every command handler."""
+
+    def __init__(self, provider: Provider) -> None:
+        self.provider = provider
+        self.paths = provider_paths(provider.name)
 
 
-def cmd_add(args) -> int:
-    rc, msg = add_current(_CODEX, _paths())
+def _bind(handler, ctx: CommandContext):
+    """Wrap an `(args, ctx)`-handler so argparse can call it as `func(args)`."""
+
+    def wrapped(args):
+        return handler(args, ctx)
+
+    return wrapped
+
+
+def cmd_add(args, ctx):
+    rc, msg = add_current(ctx.provider, ctx.paths)
     print(msg)
     return rc
 
 
-def cmd_import_profile(args) -> int:
+def cmd_import_profile(args, ctx):
     src = Path(args.profile).expanduser()
     label = args.label or src.name
     if not src.is_absolute() and "/" not in args.profile:
         src = Path.home() / ".codex-profiles" / args.profile
     if src.is_dir():
         src = src / "auth.json"
-    rc, msg = _core_add_auth_file(_CODEX, _paths(), src, source_label=label)
+    rc, msg = add_auth_file(ctx.provider, ctx.paths, src, source_label=label)
     print(msg)
     return rc
 
 
-def cmd_remove(args) -> int:
-    rc, msg = _core_remove(_CODEX, _paths(), args.target)
+def cmd_remove(args, ctx):
+    rc, msg = remove_slot(ctx.provider, ctx.paths, args.target)
     print(msg)
     return rc
 
 
-def cmd_list(args) -> int:
-    seq = load_sequence()
+def cmd_list(args, ctx):
+    seq = load_sequence(ctx.paths["sequence"])
     if not seq["accounts"]:
-        print("No accounts configured. Run `codex-swap onboard 3` to set them up.")
+        print(f"No accounts configured. Run `{ctx.provider.cli_prog} onboard 3` to set them up.")
         return 0
-    usage = {} if args.no_usage else refresh_from_rollouts()
-    active = current_slot(_CODEX, _paths(), seq)
+    usage = {} if args.no_usage else ctx.provider.refresh_usage_from_rollouts()
+    active = current_slot(ctx.provider, ctx.paths, seq)
     print(f"{'':2} {'slot':<5} {'email':<35} {'plan':<8} {'5h':>6} {'7d':>6} {'resets':>10}  notes")
     for slot in sorted(seq["accounts"], key=lambda s: int(s)):
         acc = seq["accounts"][slot]
@@ -218,13 +150,13 @@ def cmd_list(args) -> int:
         info = usage.get(slot, {}) if isinstance(usage, dict) else {}
         primary = info.get("primary") if isinstance(info.get("primary"), dict) else None
         secondary = info.get("secondary") if isinstance(info.get("secondary"), dict) else None
-        if is_exhausted(info):
+        if ctx.provider.is_exhausted(info):
             pri_pct = "100%"
             sec_pct = "100%"
             note = "limit reached"
         else:
-            pri_pct = _fmt_pct(effective_used_percent(primary))
-            sec_pct = _fmt_pct(effective_used_percent(secondary))
+            pri_pct = _fmt_pct(ctx.provider.effective_used_percent(primary))
+            sec_pct = _fmt_pct(ctx.provider.effective_used_percent(secondary))
             note = ""
         print(
             f" {marker} {slot:<5} {_account_label(acc)[:34]:<35} "
@@ -236,15 +168,15 @@ def cmd_list(args) -> int:
     return 0
 
 
-def cmd_status(args) -> int:
-    auth = current_auth()
-    if not auth:
-        print(f"No auth.json at {AUTH_PATH} (logged out).")
+def cmd_status(args, ctx):
+    creds = ctx.provider.read_live_credentials()
+    if not creds:
+        print(f"No live credentials for {ctx.provider.display_name} (logged out).")
         return 0
-    email, account_id, plan_type = auth_identity(auth)
-    fingerprint = auth_fingerprint(auth)
-    seq = load_sequence()
-    slot = current_slot(_CODEX, _paths(), seq)
+    email, account_id, plan_type = ctx.provider.credentials_identity(creds)
+    fingerprint = ctx.provider.credentials_fingerprint(creds)
+    seq = load_sequence(ctx.paths["sequence"])
+    slot = current_slot(ctx.provider, ctx.paths, seq)
     if slot:
         acc = seq["accounts"].get(slot, {})
         print(
@@ -252,31 +184,34 @@ def cmd_status(args) -> int:
             f"({plan_type or acc.get('auth_mode') or 'unknown'})"
         )
     else:
-        label = email or auth.get("auth_mode", "") or fingerprint
+        label = email or (creds.get("auth_mode", "") if isinstance(creds, dict) else "") or fingerprint
         suffix = f", account_id={account_id[:12]}…" if account_id else ""
-        print(
-            f"Active: unmanaged — {label} ({plan_type or auth.get('auth_mode', 'unknown')}){suffix}"
+        mode = (
+            plan_type
+            or (creds.get("auth_mode", "") if isinstance(creds, dict) else "")
+            or "unknown"
         )
+        print(f"Active: unmanaged — {label} ({mode}){suffix}")
     return 0
 
 
-def cmd_switch(args) -> int:
+def cmd_switch(args, ctx):
     if args.target:
-        rc, msg = switch_to(_CODEX, _paths(), args.target)
+        rc, msg = switch_to(ctx.provider, ctx.paths, args.target)
     else:
-        rc, msg = rotate(_CODEX, _paths())
+        rc, msg = rotate(ctx.provider, ctx.paths)
     print(msg)
     return rc
 
 
-def cmd_reauth(args) -> int:
-    rc, msg = _core_reauth(_CODEX, _paths(), args.target)
+def cmd_reauth(args, ctx):
+    rc, msg = core_reauth(ctx.provider, ctx.paths, args.target)
     print(msg)
     return rc
 
 
-def cmd_reconnect(args) -> int:
-    rc, fixed, still_broken = reconnect_broken(_CODEX, _paths())
+def cmd_reconnect(args, ctx):
+    rc, fixed, still_broken = reconnect_broken(ctx.provider, ctx.paths)
     if not fixed and not still_broken:
         print("All slots are healthy. Nothing to reconnect.")
         return 0
@@ -286,27 +221,27 @@ def cmd_reconnect(args) -> int:
     if still_broken:
         print(
             f"Still broken: {', '.join(still_broken)} "
-            "(run `codex-swap reauth <slot>` to retry)"
+            f"(run `{ctx.provider.cli_prog} reauth <slot>` to retry)"
         )
     return rc
 
 
-def cmd_stash(args) -> int:
-    stash_active(_CODEX, _paths(), load_sequence())
+def cmd_stash(args, ctx):
+    stash_active(ctx.provider, ctx.paths, load_sequence(ctx.paths["sequence"]))
     return 0
 
 
-def cmd_onboard(args) -> int:
-    from swap.core.onboard import onboard
-    return onboard(_CODEX, _paths(), args.count)
+def cmd_onboard(args, ctx):
+    from .onboard import onboard
+    return onboard(ctx.provider, ctx.paths, args.count)
 
 
-def cmd_verify(args) -> int:
-    results = verify_all(_CODEX, _paths())
+def cmd_verify(args, ctx):
+    results = verify_all(ctx.provider, ctx.paths)
     if not results:
         print("No slots to verify.")
         return 0
-    seq = load_sequence()
+    seq = load_sequence(ctx.paths["sequence"])
     print(f"{'slot':<5} {'email':<32} {'status':<14}  detail")
     broken = []
     rate_limited = []
@@ -324,7 +259,7 @@ def cmd_verify(args) -> int:
     if broken:
         notes.append(
             f"{len(broken)} slot(s) need re-minting (auth dead). "
-            f"Run: codex-swap reauth {' / '.join(broken)}"
+            f"Run: {ctx.provider.cli_prog} reauth {' / '.join(broken)}"
         )
     if rate_limited:
         notes.append(
@@ -343,30 +278,30 @@ def cmd_verify(args) -> int:
     return 1 if broken or errors else 0
 
 
-def cmd_usage(args) -> int:
-    data = refresh_from_rollouts()
+def cmd_usage(args, ctx):
+    data = ctx.provider.refresh_usage_from_rollouts()
     if args.json:
         import json as _json
         print(_json.dumps({"timestamp": time.time(), "data": data}, indent=2))
         return 0
     if not data:
-        print("(no usage data yet — run `codex-swap seed` to populate)")
+        print(f"(no usage data yet — run `{ctx.provider.cli_prog} seed` to populate)")
         return 0
-    style = _Style(_supports_color())
+    style = Style(supports_color())
     rows = sorted(data.items(), key=lambda kv: int(kv[0]))
     for idx, (slot, info) in enumerate(rows):
         if idx > 0:
             print()
-        _print_usage_block(style, slot, info)
+        _print_usage_block(ctx.provider, style, slot, info)
     return 0
 
 
-def _print_usage_block(style, slot: str, info: dict) -> None:
+def _print_usage_block(provider: Provider, style: Style, slot: str, info: dict) -> None:
     primary = info.get("primary") if isinstance(info.get("primary"), dict) else None
     secondary = info.get("secondary") if isinstance(info.get("secondary"), dict) else None
     source = info.get("source") or "?"
     plan = info.get("plan_type") or "—"
-    exhausted = is_exhausted(info)
+    exhausted = provider.is_exhausted(info)
 
     sep = style.dim("·")
     header_parts = [style.bold(f"slot {slot}"), sep, plan, sep, style.dim(source)]
@@ -374,16 +309,16 @@ def _print_usage_block(style, slot: str, info: dict) -> None:
         header_parts.append("  ")
         header_parts.append(style.bold_red("⚠ LIMIT REACHED"))
         header_parts.append(style.dim("—"))
-        header_parts.append(f"run {style.bold('`codex-swap seed`')} to re-check")
+        header_parts.append(f"run {style.bold(f'`{provider.cli_prog} seed`')} to re-check")
     print(" ".join(header_parts))
 
     for label, win in (("5h", primary), ("7d", secondary)):
         if exhausted:
             pct_val: float | None = 100.0
         else:
-            pct_val = effective_used_percent(win)
+            pct_val = provider.effective_used_percent(win)
         pct_text = f"{_fmt_pct(pct_val):>4}"
-        pct_colored = _color_pct(style, pct_val, pct_text)
+        pct_colored = color_pct(style, pct_val, pct_text)
 
         resets_at = win.get("resets_at") if isinstance(win, dict) else None
         reset_raw = _fmt_resets_at(resets_at)
@@ -400,29 +335,35 @@ def _print_usage_block(style, slot: str, info: dict) -> None:
         print(line)
 
 
-def cmd_seed(args) -> int:
-    seq = load_sequence()
+def cmd_seed(args, ctx):
+    seq = load_sequence(ctx.paths["sequence"])
     if not seq["accounts"]:
-        print("No slots configured. Run `codex-swap onboard 3` first.")
+        print(f"No slots configured. Run `{ctx.provider.cli_prog} onboard 3` first.")
         return 1
     if args.targets:
         slots = []
         for t in args.targets:
             slot = resolve_slot(seq, t)
             if not slot:
-                sys.stderr.write(f"codex-swap: unknown slot '{t}'\n")
+                sys.stderr.write(f"{ctx.provider.cli_prog}: unknown slot '{t}'\n")
                 return 1
             slots.append(slot)
     elif args.all:
         slots = sorted(seq["accounts"], key=int)
     else:
-        persisted = load_persisted()
+        persisted = ctx.provider.load_persisted_usage()
         slots = sorted([s for s in seq["accounts"] if s not in persisted], key=int)
         if not slots:
             print("All slots already have usage data. Pass slot numbers or --all to re-seed.")
             return 0
 
-    results = seed_slots(slots, max_concurrency=args.concurrency, probe_timeout=args.timeout)
+    results = seed_slots(
+        ctx.provider,
+        ctx.paths,
+        slots,
+        max_concurrency=args.concurrency,
+        probe_timeout=args.timeout,
+    )
     if not results:
         print("(nothing to seed)")
         return 0
@@ -435,17 +376,23 @@ def cmd_seed(args) -> int:
     return 1 if failures else 0
 
 
-def cmd_anchor(args) -> int:
-    seq = load_sequence()
+def cmd_anchor(args, ctx):
+    seq = load_sequence(ctx.paths["sequence"])
     slot = resolve_slot(seq, args.target)
     if not slot:
-        sys.stderr.write(f"codex-swap: unknown slot '{args.target}'\n")
+        sys.stderr.write(f"{ctx.provider.cli_prog}: unknown slot '{args.target}'\n")
         return 1
     print(
-        "Anchoring sends one tiny isolated Codex probe. Use it only when you "
-        "want this slot's weekly window to start now."
+        f"Anchoring sends one tiny isolated {ctx.provider.display_name} probe. "
+        "Use it only when you want this slot's weekly window to start now."
     )
-    results = seed_slots([slot], max_concurrency=1, probe_timeout=args.timeout)
+    results = seed_slots(
+        ctx.provider,
+        ctx.paths,
+        [slot],
+        max_concurrency=1,
+        probe_timeout=args.timeout,
+    )
     if not results:
         return 1
     _, status, detail = results[0]
@@ -453,20 +400,20 @@ def cmd_anchor(args) -> int:
     return 0 if status == "ok" else 1
 
 
-def cmd_policy(args) -> int:
-    seq = load_sequence()
-    current = load_policy()
+def cmd_policy(args, ctx):
+    seq = load_sequence(ctx.paths["sequence"])
+    current = load_policy(ctx.paths["policy"])
     next_policy = dict(current)
 
     if args.clear:
-        clear_policy()
+        clear_policy(ctx.paths["policy"])
         print("Cleared routing policy. cx will use lowest-usage routing.")
         return 0
 
     if args.primary:
         slot = resolve_slot(seq, args.primary)
         if not slot:
-            sys.stderr.write(f"codex-swap: unknown slot '{args.primary}'\n")
+            sys.stderr.write(f"{ctx.provider.cli_prog}: unknown slot '{args.primary}'\n")
             return 1
         next_policy["primary_slot"] = slot
 
@@ -475,7 +422,7 @@ def cmd_policy(args) -> int:
         for target in args.reserve:
             slot = resolve_slot(seq, target)
             if not slot:
-                sys.stderr.write(f"codex-swap: unknown slot '{target}'\n")
+                sys.stderr.write(f"{ctx.provider.cli_prog}: unknown slot '{target}'\n")
                 return 1
             reserves.append(slot)
         next_policy["reserve_slots"] = reserves
@@ -491,7 +438,7 @@ def cmd_policy(args) -> int:
         or args.spillover_5h is not None
         or args.spillover_7d is not None
     )
-    policy = save_policy(next_policy) if changed else current
+    policy = save_policy(ctx.paths["policy"], next_policy) if changed else current
     _print_policy(policy)
     return 0
 
@@ -508,87 +455,96 @@ def _print_policy(policy: dict) -> None:
     print(f"  spillover 7d: {policy.get('spillover_secondary_percent'):.0f}%")
 
 
-def cmd_launch(args) -> int:
-    launch(args.codex_args, skip_auto=args.skip_auto, pinned_slot=args.slot)
-    return 0  # unreachable
+def cmd_launch(args, ctx):
+    core_launch(
+        ctx.provider,
+        ctx.paths,
+        args.codex_args,
+        skip_auto=args.skip_auto,
+        pinned_slot=args.slot,
+    )
+    return 0  # unreachable; launch execs
 
 
-def cmd_purge(args) -> int:
+def cmd_purge(args, ctx):
     import shutil
 
-    root = _paths()["root"]
     if not args.yes:
-        sys.stderr.write(f"Refusing to delete {root} without --yes.\n")
+        sys.stderr.write(f"Refusing to delete {ctx.paths['root']} without --yes.\n")
         return 1
-    if root.exists():
-        shutil.rmtree(root)
-        print(f"Removed {root}")
+    if ctx.paths["root"].exists():
+        shutil.rmtree(ctx.paths["root"])
+        print(f"Removed {ctx.paths['root']}")
     return 0
 
 
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        prog="codex-swap",
-        description="Multi-account switcher for the OpenAI Codex CLI.",
-    )
-    p.add_argument("--version", action="version", version=f"codex-swap {__version__}")
+def build_parser(provider: Provider) -> argparse.ArgumentParser:
+    ctx = CommandContext(provider)
+    p = argparse.ArgumentParser(prog=provider.cli_prog, description=provider.cli_description)
+    p.add_argument("--version", action="version", version=f"{provider.cli_prog} {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
 
     sp_add = sub.add_parser("add", help="Save the currently logged-in account as a new slot")
-    sp_add.set_defaults(func=cmd_add)
+    sp_add.set_defaults(func=_bind(cmd_add, ctx))
 
     sp_import = sub.add_parser(
-        "import-profile", help="Save an existing Codex profile/auth.json as a slot"
+        "import-profile",
+        help=f"Save an existing {provider.display_name} profile/auth.json as a slot",
     )
     sp_import.add_argument(
         "profile",
         help="profile name under ~/.codex-profiles, profile dir, or auth.json path",
     )
     sp_import.add_argument("--label", help="display label for API-key or no-email auth")
-    sp_import.set_defaults(func=cmd_import_profile)
+    sp_import.set_defaults(func=_bind(cmd_import_profile, ctx))
 
     sp_rm = sub.add_parser("remove", help="Remove a slot")
     sp_rm.add_argument("target", help="slot number, email, or account_id")
-    sp_rm.set_defaults(func=cmd_remove)
+    sp_rm.set_defaults(func=_bind(cmd_remove, ctx))
 
     sp_list = sub.add_parser("list", help="List all slots with usage")
     sp_list.add_argument("--no-usage", action="store_true", help="Skip refreshing the usage cache")
-    sp_list.set_defaults(func=cmd_list)
+    sp_list.set_defaults(func=_bind(cmd_list, ctx))
 
     sp_status = sub.add_parser("status", help="Show currently active slot")
-    sp_status.set_defaults(func=cmd_status)
+    sp_status.set_defaults(func=_bind(cmd_status, ctx))
 
     sp_switch = sub.add_parser("switch", help="Switch to a slot (default: rotate to next)")
     sp_switch.add_argument("target", nargs="?", help="slot number, email, or account_id")
-    sp_switch.set_defaults(func=cmd_switch)
+    sp_switch.set_defaults(func=_bind(cmd_switch, ctx))
 
-    sp_reauth = sub.add_parser("reauth", help="Re-mint a slot via fresh codex login")
+    sp_reauth = sub.add_parser(
+        "reauth",
+        help=f"Re-mint a slot via fresh {provider.name} login",
+    )
     sp_reauth.add_argument("target", help="slot number, email, or account_id")
-    sp_reauth.set_defaults(func=cmd_reauth)
+    sp_reauth.set_defaults(func=_bind(cmd_reauth, ctx))
 
     sp_reconnect = sub.add_parser(
         "reconnect",
         help="Verify all slots, then walk you through reauth for each broken one",
     )
-    sp_reconnect.set_defaults(func=cmd_reconnect)
+    sp_reconnect.set_defaults(func=_bind(cmd_reconnect, ctx))
 
     sp_stash = sub.add_parser(
-        "stash", help="Snapshot live auth.json into its slot (preserve refreshed tokens)"
+        "stash",
+        help="Snapshot live credentials into their slot (preserve refreshed tokens)",
     )
-    sp_stash.set_defaults(func=cmd_stash)
+    sp_stash.set_defaults(func=_bind(cmd_stash, ctx))
 
     sp_onboard = sub.add_parser("onboard", help="Guided login flow for N accounts")
     sp_onboard.add_argument("count", type=int, nargs="?", default=3)
-    sp_onboard.set_defaults(func=cmd_onboard)
+    sp_onboard.set_defaults(func=_bind(cmd_onboard, ctx))
 
     sp_verify = sub.add_parser(
-        "verify", help="Test every slot's token by running a small codex exec probe"
+        "verify",
+        help=f"Test every slot's token by running a small {provider.name} probe",
     )
-    sp_verify.set_defaults(func=cmd_verify)
+    sp_verify.set_defaults(func=_bind(cmd_verify, ctx))
 
     sp_usage = sub.add_parser("usage", help="Refresh the usage cache and print")
     sp_usage.add_argument("--json", action="store_true")
-    sp_usage.set_defaults(func=cmd_usage)
+    sp_usage.set_defaults(func=_bind(cmd_usage, ctx))
 
     sp_seed = sub.add_parser(
         "seed",
@@ -608,7 +564,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp_seed.add_argument(
         "--timeout", type=float, default=30.0, help="Per-probe timeout in seconds (default: 30)"
     )
-    sp_seed.set_defaults(func=cmd_seed)
+    sp_seed.set_defaults(func=_bind(cmd_seed, ctx))
 
     sp_anchor = sub.add_parser(
         "anchor",
@@ -616,7 +572,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp_anchor.add_argument("target", help="slot number, email, or account_id")
     sp_anchor.add_argument("--timeout", type=float, default=30.0, help="Probe timeout in seconds")
-    sp_anchor.set_defaults(func=cmd_anchor)
+    sp_anchor.set_defaults(func=_bind(cmd_anchor, ctx))
 
     sp_policy = sub.add_parser("policy", help="Show or update sticky routing policy")
     sp_policy.add_argument("--primary", help="Preferred slot for normal work")
@@ -636,53 +592,43 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use another slot when primary 7d usage reaches this percent",
     )
     sp_policy.add_argument("--clear", action="store_true", help="Return to lowest-usage routing")
-    sp_policy.set_defaults(func=cmd_policy)
+    sp_policy.set_defaults(func=_bind(cmd_policy, ctx))
 
-    sp_launch = sub.add_parser("launch", help="Pick lowest-usage slot and exec codex")
+    sp_launch = sub.add_parser(
+        "launch",
+        help=f"Pick lowest-usage slot and exec {provider.name}",
+    )
     sp_launch.add_argument("--slot", help="Pin a specific slot")
     sp_launch.add_argument("--skip-auto", action="store_true", help="Skip auto-pick")
-    sp_launch.add_argument("codex_args", nargs=argparse.REMAINDER, help="Args forwarded to codex")
-    sp_launch.set_defaults(func=cmd_launch)
+    sp_launch.add_argument(
+        "codex_args",
+        nargs=argparse.REMAINDER,
+        help=f"Args forwarded to {provider.name}",
+    )
+    sp_launch.set_defaults(func=_bind(cmd_launch, ctx))
 
-    sp_purge = sub.add_parser("purge", help="Delete all codex-swap state")
+    sp_purge = sub.add_parser("purge", help=f"Delete all {provider.cli_prog} state")
     sp_purge.add_argument("--yes", action="store_true", help="Confirm")
-    sp_purge.set_defaults(func=cmd_purge)
+    sp_purge.set_defaults(func=_bind(cmd_purge, ctx))
 
+    # Provider-specific extras (e.g. codex 'seed' was historical, but a provider
+    # may add e.g. 'anchor-week' or other niche operations).
+    for extra in provider.extra_commands:
+        sp_extra = sub.add_parser(extra.name, help=extra.help)
+        extra.configure(sp_extra)
+        if sp_extra.get_default("func") is None:
+            # Allow extras to bind their func directly using ctx.
+            raise RuntimeError(
+                f"ExtraCommand '{extra.name}' did not call set_defaults(func=...) in configure"
+            )
     return p
 
 
-def main(argv: list[str] | None = None) -> int:
+def run(provider: Provider, argv: list[str] | None = None) -> int:
+    """Standard CLI entry: migrate, parse args, dispatch."""
+    from .migrate import run_all_migrations
+
     run_all_migrations()
-    parser = build_parser()
+    parser = build_parser(provider)
     ns = parser.parse_args(argv)
     return ns.func(ns)
-
-
-def cx_main(argv: list[str] | None = None) -> int:
-    """Entry point for the `cx` shim — equivalent to `codex-swap launch`."""
-    run_all_migrations()
-    args = list(sys.argv[1:] if argv is None else argv)
-    skip_auto = False
-    pinned = None
-    forwarded: list[str] = []
-    i = 0
-    while i < len(args):
-        a = args[i]
-        if a == "--codex-swap-slot" and i + 1 < len(args):
-            pinned = args[i + 1]
-            i += 2
-            continue
-        if a == "--codex-swap-skip-auto":
-            skip_auto = True
-            i += 1
-            continue
-        forwarded.append(a)
-        i += 1
-    env = os.environ
-    if "CODEX_SWAP_SKIP_AUTO" in env or "CXSWAP_SKIP_AUTO" in env:
-        skip_auto = True
-    env_slot = env.get("CODEX_SWAP_SLOT") or env.get("CXSWAP_SLOT")
-    if env_slot:
-        pinned = env_slot
-    launch(forwarded, skip_auto=skip_auto, pinned_slot=pinned)
-    return 0

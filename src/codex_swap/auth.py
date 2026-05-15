@@ -1,85 +1,32 @@
-"""Read, write, and decode Codex's auth.json."""
+"""Compat shim — re-export from `swap.providers.codex.auth`."""
 
-from __future__ import annotations
-
-import base64
-import hashlib
-import json
-import os
-from pathlib import Path
-
-from .paths import AUTH_PATH
-
-
-def read_json(path: Path) -> dict | None:
-    try:
-        return json.loads(path.read_text())
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return None
+from swap.core.jsonio import atomic_write_json, read_json
+from swap.providers.codex.auth import (
+    AUTH_PATH,
+    auth_fingerprint,
+    auth_identity,
+    clear_live_credentials,
+    current_auth,
+    decode_jwt_payload,
+    restore_from_slot,
+    snapshot_to_slot,
+)
 
 
-def atomic_write_json(path: Path, data: dict, mode: int = 0o600) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(path.parent, 0o700)
-    except OSError:
-        pass
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2))
-    os.chmod(tmp, mode)
-    tmp.replace(path)
-
-
-def decode_jwt_payload(token: str) -> dict | None:
-    if not token:
-        return None
-    try:
-        parts = token.split(".")
-        if len(parts) < 2:
-            return None
-        pad = "=" * (-len(parts[1]) % 4)
-        return json.loads(base64.urlsafe_b64decode(parts[1] + pad))
-    except Exception:
-        return None
-
-
-def auth_identity(auth: dict) -> tuple[str, str, str]:
-    """Return (email, account_id, plan_type) from a parsed auth.json blob."""
-    if not isinstance(auth, dict):
-        return "", "", ""
-    tokens = auth.get("tokens", {}) or {}
-    account_id = tokens.get("account_id", "") or ""
-    payload = decode_jwt_payload(tokens.get("id_token", "") or "")
-    email = ""
-    plan_type = ""
-    if payload:
-        email = payload.get("email", "") or ""
-        chatgpt = payload.get("https://api.openai.com/auth", {})
-        if isinstance(chatgpt, dict):
-            plan_type = chatgpt.get("chatgpt_plan_type", "") or ""
-    return email, account_id, plan_type
-
-
-def auth_fingerprint(auth: dict) -> str:
-    """Return a stable, non-secret identifier for auth blobs without account_id."""
-    if not isinstance(auth, dict):
-        return ""
-    tokens = auth.get("tokens", {}) or {}
-    account_id = tokens.get("account_id", "") or ""
-    if account_id:
-        return f"chatgpt:{account_id}"
-
-    api_key = auth.get("OPENAI_API_KEY", "") or ""
-    if isinstance(api_key, str) and api_key:
-        digest = hashlib.sha256(api_key.encode()).hexdigest()[:24]
-        return f"apikey:{digest}"
-
-    return ""
-
-
-def current_auth() -> dict | None:
-    return read_json(AUTH_PATH)
-
-
-def current_identity() -> tuple[str, str, str]:
+def current_identity():
     return auth_identity(current_auth() or {})
+
+
+__all__ = [
+    "AUTH_PATH",
+    "atomic_write_json",
+    "auth_fingerprint",
+    "auth_identity",
+    "clear_live_credentials",
+    "current_auth",
+    "current_identity",
+    "decode_jwt_payload",
+    "read_json",
+    "restore_from_slot",
+    "snapshot_to_slot",
+]

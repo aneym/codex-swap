@@ -1,11 +1,11 @@
-"""Pure-logic tests for auth.py — no codex install required."""
+"""Pure-logic tests for codex auth — no codex install required."""
 
 from __future__ import annotations
 
 import base64
 import json
 
-from codex_swap.auth import auth_fingerprint, auth_identity, decode_jwt_payload
+from swap.providers.codex.auth import auth_fingerprint, auth_identity, decode_jwt_payload
 
 
 def _make_jwt(payload: dict) -> str:

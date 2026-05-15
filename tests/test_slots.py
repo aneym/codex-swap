@@ -1,17 +1,19 @@
-"""Tests for slot resolution helpers in slots.py."""
+"""Tests for slot resolution helpers."""
 
 from __future__ import annotations
 
 import subprocess
 
-from codex_swap import slots
-from codex_swap.slots import (
-    _resolve,
-    add_auth_file,
+from swap.core.sequence import (
     next_free_slot,
     slot_for_account_id,
-    slot_for_auth,
 )
+from swap.core.sequence import (
+    resolve_slot as _resolve,
+)
+from swap.core.slots import add_auth_file, slot_for_credentials
+from swap.providers.codex import CODEX
+from swap.providers.codex import oauth as codex_oauth
 
 
 def _seq(*entries: tuple[str, dict]) -> dict:
@@ -19,6 +21,10 @@ def _seq(*entries: tuple[str, dict]) -> dict:
         "sequence": [s for s, _ in entries],
         "accounts": {s: a for s, a in entries},
     }
+
+
+def slot_for_auth(seq, auth):
+    return slot_for_credentials(CODEX, seq, auth)
 
 
 def test_resolve_by_slot_number():
@@ -58,20 +64,26 @@ def test_resolve_by_fingerprint_and_label():
     assert _resolve(seq, "work") == "2"
 
 
-def test_add_auth_file_imports_api_key_profile(tmp_path, monkeypatch):
-    monkeypatch.setattr(slots, "ACCOUNTS_DIR", tmp_path / "accounts")
-    monkeypatch.setattr(slots, "SEQUENCE_PATH", tmp_path / "sequence.json")
-    monkeypatch.setattr(slots, "STATE_PATH", tmp_path / "state.json")
+def test_add_auth_file_imports_api_key_profile(tmp_path):
+    paths = {
+        "root": tmp_path,
+        "accounts_dir": tmp_path / "accounts",
+        "sequence": tmp_path / "sequence.json",
+        "state": tmp_path / "state.json",
+        "policy": tmp_path / "policy.json",
+        "usage_cache": tmp_path / "cache" / "usage.json",
+    }
 
     auth_path = tmp_path / "profile" / "auth.json"
     auth_path.parent.mkdir()
     auth_path.write_text('{"auth_mode": "apikey", "OPENAI_API_KEY": "sk-test"}')
 
-    rc, msg = add_auth_file(auth_path, source_label="work")
+    rc, msg = add_auth_file(CODEX, paths, auth_path, source_label="work")
 
     assert rc == 0
     assert "work" in msg
-    seq = slots.load_sequence()
+    from swap.core.sequence import load_sequence
+    seq = load_sequence(paths["sequence"])
     assert seq["sequence"] == ["1"]
     assert seq["accounts"]["1"]["label"] == "work"
     assert seq["accounts"]["1"]["auth_mode"] == "apikey"
@@ -89,9 +101,10 @@ def test_probe_slot_timeout_handles_bytes_output(monkeypatch):
             stderr=b"",
         )
 
-    monkeypatch.setattr(slots.subprocess, "run", fake_run)
+    monkeypatch.setattr(codex_oauth.subprocess, "run", fake_run)
+    monkeypatch.setattr(codex_oauth, "find_binary", lambda: "/usr/local/bin/codex")
 
-    assert slots._probe_slot("/usr/local/bin/codex") == (
+    assert codex_oauth.probe_active_slot() == (
         "ok",
         "auth ok (response was streaming when timeout fired)",
     )
@@ -106,9 +119,10 @@ def test_probe_slot_non_auth_failure_is_error(monkeypatch):
             stderr='ERROR: {"detail":"model requires a newer version"}',
         )
 
-    monkeypatch.setattr(slots.subprocess, "run", fake_run)
+    monkeypatch.setattr(codex_oauth.subprocess, "run", fake_run)
+    monkeypatch.setattr(codex_oauth, "find_binary", lambda: "/usr/local/bin/codex")
 
-    status, detail = slots._probe_slot("/usr/local/bin/codex")
+    status, detail = codex_oauth.probe_active_slot()
     assert status == "error"
     assert "model requires a newer version" in detail
 

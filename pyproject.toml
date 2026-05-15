@@ -31,12 +31,14 @@ Changelog = "https://github.com/aneym/codex-swap/blob/main/CHANGELOG.md"
 [project.scripts]
 codex-swap = "codex_swap.cli:main"
 cx = "codex_swap.cli:cx_main"
+claude-swap = "swap.providers.claude.cli:main"
+cs = "swap.providers.claude.cli:cs_main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/codex_swap"]
+packages = ["src/swap", "src/codex_swap"]
 
 [tool.hatch.version]
-path = "src/codex_swap/__init__.py"
+path = "src/swap/__init__.py"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

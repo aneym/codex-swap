@@ -1,4 +1,4 @@
-"""Tests for usage.py — rollout parsing, persistence, decay, and merge."""
+"""Tests for codex usage — rollout parsing, persistence, decay, and merge."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import json
 import time
 from pathlib import Path
 
-from codex_swap import usage as usage_mod
-from codex_swap.usage import (
+from swap.providers.codex import usage as usage_mod
+from swap.providers.codex.usage import (
     effective_record,
     effective_used_percent,
     is_exhausted,
@@ -33,6 +33,11 @@ EXHAUSTION_PAYLOAD = {
 }
 
 
+def _redirect_usage_cache(monkeypatch, target: Path) -> None:
+    """Point the provider's usage cache resolver at a tmp file."""
+    monkeypatch.setattr(usage_mod, "_usage_cache", lambda: target)
+
+
 def test_session_id_from_path_extracts_uuid():
     p = Path("rollout-2026-05-04T16-58-12-019df4c8-c9bb-7f32-bdea-c1edf0185198.jsonl")
     assert session_id_from_path(p) == "019df4c8-c9bb-7f32-bdea-c1edf0185198"
@@ -45,7 +50,6 @@ def test_session_id_from_path_returns_none_for_garbage():
 def test_latest_rate_limits_finds_most_recent_non_null(tmp_path: Path):
     p = tmp_path / "rollout-2026-05-04T00-00-00-aaa-bbb-ccc-ddd-eee.jsonl"
     events = [
-        # Earlier event with null rate limits
         {
             "timestamp": "2026-05-04T20:00:00Z",
             "type": "event_msg",
@@ -54,7 +58,6 @@ def test_latest_rate_limits_finds_most_recent_non_null(tmp_path: Path):
                 "rate_limits": {"primary": None, "secondary": None},
             },
         },
-        # Later event with real data — this is what we want
         {
             "timestamp": "2026-05-04T20:01:00Z",
             "type": "event_msg",
@@ -67,7 +70,6 @@ def test_latest_rate_limits_finds_most_recent_non_null(tmp_path: Path):
                 },
             },
         },
-        # An event of a different type — should be ignored
         {"timestamp": "2026-05-04T20:02:00Z", "type": "session_meta", "payload": {}},
     ]
     p.write_text("\n".join(json.dumps(e) for e in events))
@@ -133,20 +135,20 @@ def test_effective_record_marks_reset_window():
 
 
 def test_persisted_roundtrip(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(usage_mod, "USAGE_CACHE", tmp_path / "usage.json")
+    _redirect_usage_cache(monkeypatch, tmp_path / "usage.json")
     save_persisted({"1": {"primary": {"used_percent": 10.0}, "scanned_at": 100.0}})
     loaded = load_persisted()
     assert loaded["1"]["primary"]["used_percent"] == 10.0
 
 
 def test_load_persisted_handles_missing_file(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(usage_mod, "USAGE_CACHE", tmp_path / "missing.json")
+    _redirect_usage_cache(monkeypatch, tmp_path / "missing.json")
     assert load_persisted() == {}
 
 
 def test_merge_into_persisted_keeps_unrelated_slots(tmp_path: Path, monkeypatch):
     """A scan that only finds slot 2 must not erase slot 1."""
-    monkeypatch.setattr(usage_mod, "USAGE_CACHE", tmp_path / "usage.json")
+    _redirect_usage_cache(monkeypatch, tmp_path / "usage.json")
     save_persisted({
         "1": {"primary": {"used_percent": 10.0}, "scanned_at": 100.0},
         "2": {"primary": {"used_percent": 20.0}, "scanned_at": 100.0},
@@ -159,9 +161,8 @@ def test_merge_into_persisted_keeps_unrelated_slots(tmp_path: Path, monkeypatch)
 
 
 def test_merge_into_persisted_only_replaces_when_newer(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(usage_mod, "USAGE_CACHE", tmp_path / "usage.json")
+    _redirect_usage_cache(monkeypatch, tmp_path / "usage.json")
     save_persisted({"1": {"primary": {"used_percent": 50.0}, "scanned_at": 200.0}})
-    # Older scanned_at — should NOT replace.
     merged = merge_into_persisted({
         "1": {"primary": {"used_percent": 99.0}, "scanned_at": 100.0},
     })
@@ -169,7 +170,7 @@ def test_merge_into_persisted_only_replaces_when_newer(tmp_path: Path, monkeypat
 
 
 def test_merge_into_persisted_adds_brand_new_slots(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(usage_mod, "USAGE_CACHE", tmp_path / "usage.json")
+    _redirect_usage_cache(monkeypatch, tmp_path / "usage.json")
     save_persisted({"1": {"primary": {"used_percent": 10.0}, "scanned_at": 100.0}})
     merged = merge_into_persisted({
         "3": {"primary": {"used_percent": 5.0}, "scanned_at": 150.0},
@@ -178,7 +179,7 @@ def test_merge_into_persisted_adds_brand_new_slots(tmp_path: Path, monkeypatch):
 
 
 def test_merge_ignores_non_dict_payload(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(usage_mod, "USAGE_CACHE", tmp_path / "usage.json")
+    _redirect_usage_cache(monkeypatch, tmp_path / "usage.json")
     save_persisted({"1": {"primary": {"used_percent": 10.0}, "scanned_at": 100.0}})
     merge_into_persisted({"2": "not a dict", "3": None})
     assert load_persisted() == {"1": {"primary": {"used_percent": 10.0}, "scanned_at": 100.0}}
@@ -279,9 +280,7 @@ def test_latest_rate_limits_skips_pure_no_data(tmp_path: Path):
 
 
 def test_merge_exhaustion_inherits_prior_window_timing(tmp_path: Path, monkeypatch):
-    """An exhaustion update preserves prior `secondary.resets_at` so display
-    still knows when the cap is expected to clear."""
-    monkeypatch.setattr(usage_mod, "USAGE_CACHE", tmp_path / "usage.json")
+    _redirect_usage_cache(monkeypatch, tmp_path / "usage.json")
     save_persisted({
         "2": {
             "primary": {"used_percent": 30.0, "resets_at": 1_111},
@@ -308,13 +307,12 @@ def test_merge_exhaustion_inherits_prior_window_timing(tmp_path: Path, monkeypat
     assert rec["exhausted_at"] == 200.0
     assert rec["primary"]["resets_at"] == 1_111
     assert rec["secondary"]["resets_at"] == 9_999
-    assert rec["plan_type"] == "pro"  # carried over since new was None
+    assert rec["plan_type"] == "pro"
     assert rec["source"] == "rollout-exhausted"
 
 
 def test_merge_exhaustion_with_no_prior_record(tmp_path: Path, monkeypatch):
-    """Exhaustion before any healthy reading produces a record with no windows."""
-    monkeypatch.setattr(usage_mod, "USAGE_CACHE", tmp_path / "usage.json")
+    _redirect_usage_cache(monkeypatch, tmp_path / "usage.json")
     merged = merge_into_persisted({
         "1": {
             "primary": None,
@@ -333,8 +331,7 @@ def test_merge_exhaustion_with_no_prior_record(tmp_path: Path, monkeypatch):
 
 
 def test_merge_healthy_replaces_prior_exhaustion(tmp_path: Path, monkeypatch):
-    """A fresh successful rollout fully clears the exhausted flag."""
-    monkeypatch.setattr(usage_mod, "USAGE_CACHE", tmp_path / "usage.json")
+    _redirect_usage_cache(monkeypatch, tmp_path / "usage.json")
     save_persisted({
         "1": {
             "primary": None,

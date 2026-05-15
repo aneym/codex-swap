@@ -5,16 +5,16 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from codex_swap import codex
+from swap.providers.codex import binary as codex_binary
 
 
 def test_codex_version_parses_cli_output(monkeypatch):
     def fake_run(*args, **kwargs):
         return subprocess.CompletedProcess(args[0], 0, stdout="codex-cli 0.128.0\n", stderr="")
 
-    monkeypatch.setattr(codex.subprocess, "run", fake_run)
+    monkeypatch.setattr(codex_binary.subprocess, "run", fake_run)
 
-    assert codex._codex_version(Path("/tmp/codex")) == (0, 128, 0)
+    assert codex_binary._codex_version(Path("/tmp/codex")) == (0, 128, 0)
 
 
 def test_find_real_codex_picks_newest_candidate(monkeypatch, tmp_path):
@@ -38,6 +38,6 @@ def test_find_real_codex_picks_newest_candidate(monkeypatch, tmp_path):
             return (0, 128, 0)
         return None
 
-    monkeypatch.setattr(codex, "_codex_version", fake_version)
+    monkeypatch.setattr(codex_binary, "_codex_version", fake_version)
 
-    assert codex.find_real_codex() == str(new)
+    assert codex_binary.find_binary() == str(new)

@@ -1,638 +1,223 @@
-"""Slot CRUD: add, remove, list, switch, reauth, seed."""
+"""Compat shim — re-exports from `swap.core.slots` and `swap.providers.codex`.
+
+The original `codex_swap.slots` exposed a flat module surface with implicit
+codex provider context. This shim keeps the function signatures the same and
+binds the codex provider for callers that haven't migrated to `swap.*` yet.
+"""
 
 from __future__ import annotations
 
-import concurrent.futures
-import os
-import shutil
-import subprocess
-import sys
-import tempfile
-import time
-from pathlib import Path
+import subprocess as _subprocess
 
-from .auth import (
-    atomic_write_json,
-    auth_fingerprint,
-    auth_identity,
-    current_auth,
-    read_json,
+from swap.core.paths import provider_paths
+from swap.core.reauth import (
+    reauth as _core_reauth,
 )
-from .codex import codex_env, find_real_codex
-from .paths import (
-    ACCOUNTS_DIR,
-    AUTH_PATH,
-    SEQUENCE_PATH,
-    STATE_PATH,
+from swap.core.reauth import (
+    reconnect_broken as _core_reconnect_broken,
 )
+from swap.core.reauth import (
+    verify_all as _core_verify_all,
+)
+from swap.core.sequence import (
+    load_sequence as _core_load_sequence,
+)
+from swap.core.sequence import (
+    load_state as _core_load_state,
+)
+from swap.core.sequence import (
+    next_free_slot,
+    resolve_slot,
+    slot_for_account_id,
+)
+from swap.core.sequence import (
+    save_sequence as _core_save_sequence,
+)
+from swap.core.sequence import (
+    save_state as _core_save_state,
+)
+from swap.core.slots import (
+    add_auth_file as _core_add_auth_file,
+)
+from swap.core.slots import (
+    add_current as _core_add_current,
+)
+from swap.core.slots import (
+    current_slot as _core_current_slot,
+)
+from swap.core.slots import (
+    remove as _core_remove,
+)
+from swap.core.slots import (
+    rotate as _core_rotate,
+)
+from swap.core.slots import (
+    seed_slots as _core_seed_slots,
+)
+from swap.core.slots import (
+    slot_for_credentials,
+)
+from swap.core.slots import (
+    stash_active as _core_stash_active,
+)
+from swap.core.slots import (
+    switch_to as _core_switch_to,
+)
+from swap.providers.codex import CODEX as _CODEX
+from swap.providers.codex import oauth as _oauth
+
+# Tests do `monkeypatch.setattr(slots.subprocess, "run", ...)`. Re-bind so the
+# patch propagates to the provider's oauth module.
+subprocess = _subprocess
+_oauth.subprocess = _subprocess  # ensure module-attr patching works
 
 
-def load_sequence() -> dict:
-    data = read_json(SEQUENCE_PATH) or {}
-    data.setdefault("sequence", [])
-    data.setdefault("accounts", {})
-    return data
-
-
-def save_sequence(data: dict) -> None:
-    atomic_write_json(SEQUENCE_PATH, data)
-
-
-def load_state() -> dict:
-    return read_json(STATE_PATH) or {}
-
-
-def save_state(data: dict) -> None:
-    atomic_write_json(STATE_PATH, data)
-
-
-def slot_for_account_id(seq: dict, account_id: str) -> str | None:
-    if not account_id:
-        return None
-    for slot, acc in seq.get("accounts", {}).items():
-        if acc.get("account_id") == account_id:
-            return str(slot)
-    return None
-
-
-def slot_for_auth(seq: dict, auth: dict) -> str | None:
-    if not auth:
-        return None
-    _, account_id, _ = auth_identity(auth)
-    slot = slot_for_account_id(seq, account_id)
-    if slot:
-        return slot
-    fingerprint = auth_fingerprint(auth)
-    if not fingerprint:
-        return None
-    for slot, acc in seq.get("accounts", {}).items():
-        if acc.get("auth_fingerprint") == fingerprint:
-            return str(slot)
-    return None
-
-
-def current_slot(seq: dict | None = None) -> str | None:
-    seq = seq or load_sequence()
-    auth = current_auth()
-    if not auth:
-        return None
-    return slot_for_auth(seq, auth)
-
-
-def next_free_slot(seq: dict) -> str:
-    used = {int(s) for s in seq.get("accounts", {}) if str(s).isdigit()}
-    n = 1
-    while n in used:
-        n += 1
-    return str(n)
-
-
-def stash_active(seq: dict) -> None:
-    """Snapshot the live auth.json into its slot dir.
-
-    Codex rotates the refresh_token on every successful refresh. Stashing
-    before any other write keeps the slot's snapshot in sync, so the next
-    swap-in won't replay a single-use token.
-    """
-    auth = current_auth()
-    if not auth:
-        return
-    slot = slot_for_auth(seq, auth)
-    if not slot:
-        return
-    target = ACCOUNTS_DIR / slot / "auth.json"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(AUTH_PATH, target)
-    os.chmod(target, 0o600)
-
-
-def add_current() -> tuple[int, str]:
-    """Snapshot the live login as a new slot. Returns (rc, message)."""
-    return add_auth_file(AUTH_PATH, mark_active=True)
-
-
-def add_auth_file(
-    auth_path: Path,
-    *,
-    mark_active: bool = False,
-    source_label: str = "",
-) -> tuple[int, str]:
-    """Snapshot an auth.json file as a new slot. Returns (rc, message)."""
-    auth_path = Path(auth_path).expanduser()
-    auth = read_json(auth_path)
-    path_label = str(auth_path)
-    if not auth:
-        return 1, f"No auth.json at {path_label}. Run `codex login` first."
-    email, account_id, plan_type = auth_identity(auth)
-    fingerprint = auth_fingerprint(auth)
-    if not (account_id or fingerprint):
-        return 1, "auth.json has no recognizable Codex account identity."
-
-    seq = load_sequence()
-    existing = slot_for_auth(seq, auth)
-    if existing:
-        label = email or source_label or account_id or fingerprint
-        return 1, f"Account {label} already saved as slot {existing}."
-
-    slot = next_free_slot(seq)
-    target = ACCOUNTS_DIR / slot / "auth.json"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(auth_path, target)
-    os.chmod(target, 0o600)
-
-    seq["accounts"][slot] = {
-        "email": email,
-        "account_id": account_id,
-        "auth_fingerprint": fingerprint,
-        "auth_mode": auth.get("auth_mode", ""),
-        "plan_type": plan_type,
-        "label": source_label,
-        "added_at": time.time(),
+def _paths_now():
+    """Resolve paths fresh each call so tests can monkeypatch module-level constants."""
+    return {
+        "root": provider_paths("codex")["root"],
+        "accounts_dir": ACCOUNTS_DIR,
+        "sequence": SEQUENCE_PATH,
+        "state": STATE_PATH,
+        "policy": provider_paths("codex")["policy"],
+        "usage_cache": provider_paths("codex")["usage_cache"],
     }
-    seq["sequence"] = sorted(set(seq["sequence"] + [slot]), key=int)
-    save_sequence(seq)
-
-    if mark_active:
-        state = load_state()
-        state["active_slot"] = slot
-        state["last_switched_at"] = time.time()
-        save_state(state)
-    mode = auth.get("auth_mode", "") or "unknown auth"
-    label = email or source_label or account_id or fingerprint
-    return 0, f"Added slot {slot}: {label} ({plan_type or mode})"
 
 
-def remove(target: str) -> tuple[int, str]:
-    seq = load_sequence()
-    slot = _resolve(seq, target)
-    if slot is None:
-        return 1, f"No matching slot for '{target}'."
-    seq["accounts"].pop(slot, None)
-    seq["sequence"] = [s for s in seq["sequence"] if str(s) != slot]
-    save_sequence(seq)
-    slot_dir = ACCOUNTS_DIR / slot
-    if slot_dir.exists():
-        shutil.rmtree(slot_dir)
-    # Drop the persisted usage record so a future re-add at this slot number
-    # doesn't inherit the previous account's data.
-    from .usage import drop_slot_record
+# Mutable module-level constants — tests monkeypatch these on the module.
+_paths_initial = provider_paths("codex")
+ACCOUNTS_DIR = _paths_initial["accounts_dir"]
+SEQUENCE_PATH = _paths_initial["sequence"]
+STATE_PATH = _paths_initial["state"]
+AUTH_PATH = None  # populated lazily below
 
-    drop_slot_record(slot)
-    return 0, f"Removed slot {slot}."
+from swap.providers.codex.auth import AUTH_PATH  # noqa: E402, F811
+
+# --- public API (delegating to core, but honoring monkeypatched constants) ---
 
 
-def switch_to(target: str) -> tuple[int, str]:
-    seq = load_sequence()
-    slot = _resolve(seq, target)
-    if slot is None:
-        return 1, f"No matching slot for '{target}'."
-    src = ACCOUNTS_DIR / slot / "auth.json"
-    if not src.exists():
-        return 1, f"Snapshot missing at {src}."
-    stash_active(seq)
-    AUTH_PATH.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, AUTH_PATH)
-    os.chmod(AUTH_PATH, 0o600)
-    state = load_state()
-    state["active_slot"] = slot
-    state["last_switched_at"] = time.time()
-    save_state(state)
-    acc = seq["accounts"][slot]
-    return 0, f"Switched to slot {slot}: {acc.get('email') or '(no email)'}"
+def load_sequence():
+    return _core_load_sequence(SEQUENCE_PATH)
 
 
-def rotate() -> tuple[int, str]:
-    seq = load_sequence()
-    if not seq["sequence"]:
-        return 1, "No accounts configured."
-    sequence = [str(s) for s in seq["sequence"]]
-    cur = current_slot(seq)
-    idx = (sequence.index(cur) + 1) % len(sequence) if cur in sequence else 0
-    return switch_to(sequence[idx])
+def save_sequence(data):
+    _core_save_sequence(SEQUENCE_PATH, data)
 
 
-def reauth(target: str) -> tuple[int, str]:
-    """Re-mint a slot via 'codex login' without server-side revoke.
-
-    NEVER call 'codex logout' here — it revokes the refresh token at the
-    OAuth provider, killing every other slot whose snapshot pre-dates the
-    revoke. We just clear the local auth.json and run a fresh login.
-    """
-    seq = load_sequence()
-    slot = _resolve(seq, target)
-    if slot is None:
-        return 1, f"No matching slot for '{target}'."
-    expected_email = seq["accounts"][slot].get("email") or ""
-    expected_account_id = seq["accounts"][slot].get("account_id") or ""
-
-    stash_active(seq)
-    if AUTH_PATH.exists():
-        AUTH_PATH.unlink()
-
-    real = find_real_codex()
-    print(f"\nRe-minting slot {slot} ({expected_email or 'unknown'}).")
-    print("A browser will open. Sign in to that ChatGPT Pro account.")
-    print("If you sign in to a different account this slot will be rejected.\n")
-
-    rc = subprocess.run([real, "login"], env=codex_env()).returncode
-    if rc != 0:
-        return rc, "codex login exited non-zero. Slot snapshot left unchanged."
-    if not AUTH_PATH.exists():
-        return 1, "codex login finished but auth.json was not created."
-
-    new_email, new_account_id, new_plan = auth_identity(current_auth() or {})
-    if expected_email and new_email and new_email != expected_email:
-        return 2, (
-            f"Email mismatch: expected {expected_email}, got {new_email}.\n"
-            f"Slot {slot}'s snapshot left untouched. Run `codex-swap switch {slot}` to roll back, "
-            "or `codex-swap add` to register the new email as a separate slot."
-        )
-
-    target_path = ACCOUNTS_DIR / slot / "auth.json"
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(AUTH_PATH, target_path)
-    os.chmod(target_path, 0o600)
-
-    note = ""
-    if expected_account_id and new_account_id and new_account_id != expected_account_id:
-        note = f" (account_id changed: {expected_account_id[:8]}… → {new_account_id[:8]}…)"
-    seq["accounts"][slot]["email"] = new_email or expected_email
-    seq["accounts"][slot]["account_id"] = new_account_id or expected_account_id
-    if new_plan:
-        seq["accounts"][slot]["plan_type"] = new_plan
-    save_sequence(seq)
-
-    state = load_state()
-    state["active_slot"] = slot
-    state["last_switched_at"] = time.time()
-    save_state(state)
-    return 0, f"Slot {slot} re-minted: {new_email}{note}"
+def load_state():
+    return _core_load_state(STATE_PATH)
 
 
-# Phrases that ONLY fire when codex's basic auth refresh is dead.
-# Drops broad strings like '401 Unauthorized' (which the codex_apps MCP also
-# emits when its separate connector OAuth is revoked — non-fatal for codex).
-_BAD_TOKEN_PHRASES = (
-    "Failed to refresh token",
-    "refresh_token_reused",
-    "refresh_token_revoked",
-    "Your refresh token has already been used",
-    "Your refresh token was revoked",
-    "your refresh token was already used",
-    "your refresh token was revoked",
-    "token_invalidated",
-)
+def save_state(data):
+    _core_save_state(STATE_PATH, data)
 
 
-def _looks_broken(text: str) -> str | None:
-    for phrase in _BAD_TOKEN_PHRASES:
-        if phrase in text:
-            return phrase
-    return None
+def current_slot(seq=None):
+    return _core_current_slot(_CODEX, _paths_now(), seq)
 
 
-_RATE_LIMIT_PHRASES = (
-    "You've hit your usage limit",
-    "rate_limit_reached",
-    "usage limit. Visit",
-    "limit_reached_type",
-)
+def stash_active(seq):
+    _core_stash_active(_CODEX, _paths_now(), seq)
 
 
-def _probe_slot(real_codex: str, timeout: float = 10.0) -> tuple[str, str]:
-    """Probe the active slot. Returns (status, detail).
-
-    Status is one of:
-      - 'ok'           - auth refreshes, responses stream
-      - 'rate_limited' - auth fine, but window quota exhausted
-      - 'broken'       - refresh_token is dead, needs `codex-swap reauth`
-    """
-    """Run a real auth-exercising probe against the active slot.
-
-    Spawns `codex exec "ok"` with a hard timeout. Codex must refresh the
-    access token before any API call, so a dead refresh_token surfaces in
-    stderr within the first second or two as one of the
-    codex_login::auth::manager error phrases. Costs ~50 tokens on success.
-
-    A timeout without a known-bad phrase means codex is happily streaming
-    a response and basic auth is fine.
-    """
-    verify_model = os.environ.get("CODEX_SWAP_VERIFY_MODEL", "gpt-5.4-mini")
-    cmd = [
-        real_codex,
-        "exec",
-        "--skip-git-repo-check",
-        "--ephemeral",
-        "--sandbox",
-        "read-only",
-    ]
-    if verify_model:
-        cmd.extend(["-m", verify_model])
-    cmd.append("Reply exactly ok and do not use tools.")
-    try:
-        proc = subprocess.run(
-            cmd,
-            env=codex_env(),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            stdin=subprocess.DEVNULL,
-        )
-        combined = _as_text(proc.stdout) + "\n" + _as_text(proc.stderr)
-        rc = proc.returncode
-    except subprocess.TimeoutExpired as exc:
-        combined = _as_text(exc.stdout) + "\n" + _as_text(exc.stderr)
-        rc = None  # streaming, no exit yet
-
-    bad = _looks_broken(combined)
-    if bad:
-        return "broken", _line_with(combined, bad)
-    if any(p in combined for p in _RATE_LIMIT_PHRASES):
-        return "rate_limited", _line_with(combined, _first_match(combined, _RATE_LIMIT_PHRASES))
-    if rc is None:
-        return "ok", "auth ok (response was streaming when timeout fired)"
-    if rc == 0:
-        return "ok", "auth ok"
-    last_err = ""
-    for line in reversed(combined.splitlines()):
-        if line.strip():
-            last_err = line.strip()
-            break
-    return "error", f"probe exited {rc}: {last_err[:120]}"
+def add_current():
+    return _core_add_current(_CODEX, _paths_now())
 
 
-def _as_text(value) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, bytes):
-        return value.decode(errors="replace")
-    return str(value)
-
-
-def _first_match(text: str, phrases) -> str:
-    for phrase in phrases:
-        if phrase in text:
-            return phrase
-    return ""
-
-
-def _line_with(text: str, phrase: str) -> str:
-    for line in text.splitlines():
-        if phrase in line:
-            return line.strip()[:140]
-    return phrase
-
-
-def _probe_slot_isolated(
-    slot: str,
-    snapshot_path: Path,
-    real_codex: str,
-    timeout: float = 30.0,
-) -> tuple[str, str, str, dict | None]:
-    """Probe one slot using its own temporary CODEX_HOME (parallel-safe).
-
-    Each probe gets a private temp dir as CODEX_HOME so multiple probes can
-    run concurrently without fighting over `~/.codex/auth.json` or stepping
-    on the user's active session. The probe:
-
-    1. Copies the slot's snapshot auth.json into the temp CODEX_HOME.
-    2. Runs `codex exec` against it (small prompt, ~50 tokens).
-    3. Reads rate_limits from the rollout codex wrote inside the temp dir.
-    4. Copies the (now-refreshed) auth.json back to the slot snapshot, so
-       any rotated refresh_token is preserved for next time.
-    5. Cleans up the temp dir.
-
-    Returns (slot, status, detail, record_or_none). Status is one of
-    'ok' / 'rate_limited' / 'broken' / 'error' / 'switch_failed'. Record is
-    the unified usage shape ({primary, secondary, plan_type, scanned_at,
-    source, source_path}) when rate_limits were captured, else None.
-    """
-    if not snapshot_path.exists():
-        return slot, "switch_failed", f"no snapshot at {snapshot_path}", None
-
-    from .usage import latest_rate_limits  # avoid circular import at module load
-
-    tmp_root = Path(tempfile.mkdtemp(prefix=f"codex-swap-probe-{slot}-"))
-    try:
-        try:
-            os.chmod(tmp_root, 0o700)
-        except OSError:
-            pass
-        tmp_auth = tmp_root / "auth.json"
-        shutil.copy2(snapshot_path, tmp_auth)
-        os.chmod(tmp_auth, 0o600)
-
-        env = codex_env()
-        env["CODEX_HOME"] = str(tmp_root)
-
-        verify_model = os.environ.get("CODEX_SWAP_VERIFY_MODEL", "gpt-5.4-mini")
-        cmd = [
-            real_codex,
-            "exec",
-            "--skip-git-repo-check",
-            "--ignore-user-config",
-            "--sandbox",
-            "read-only",
-        ]
-        if verify_model:
-            cmd.extend(["-m", verify_model])
-        cmd.append("Reply exactly ok and do not use tools.")
-
-        try:
-            proc = subprocess.run(
-                cmd,
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                stdin=subprocess.DEVNULL,
-            )
-            combined = _as_text(proc.stdout) + "\n" + _as_text(proc.stderr)
-            rc = proc.returncode
-        except subprocess.TimeoutExpired as exc:
-            combined = _as_text(exc.stdout) + "\n" + _as_text(exc.stderr)
-            rc = None  # streaming; rate_limits may still be in the rollout
-
-        bad = _looks_broken(combined)
-        if bad:
-            return slot, "broken", _line_with(combined, bad), None
-        if any(p in combined for p in _RATE_LIMIT_PHRASES):
-            return slot, "rate_limited", _line_with(combined, _first_match(combined, _RATE_LIMIT_PHRASES)), None
-
-        # Capture any rotated refresh_token before we tear down the temp dir.
-        if tmp_auth.exists():
-            shutil.copy2(tmp_auth, snapshot_path)
-            os.chmod(snapshot_path, 0o600)
-
-        # Pull rate_limits out of the rollout codex wrote inside our temp dir.
-        record: dict | None = None
-        sessions_root = tmp_root / "sessions"
-        rollout_path: Path | None = None
-        if sessions_root.exists():
-            rollouts = list(sessions_root.rglob("rollout-*.jsonl"))
-            if rollouts:
-                rollouts.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-                rollout_path = rollouts[0]
-                rl = latest_rate_limits(rollout_path)
-                if isinstance(rl, dict):
-                    record = {
-                        "primary": rl.get("primary"),
-                        "secondary": rl.get("secondary"),
-                        "plan_type": rl.get("plan_type"),
-                        "scanned_at": time.time(),
-                        "source": "probe",
-                        "source_path": str(rollout_path),
-                    }
-
-        if rc == 0:
-            detail = "auth ok" if record else "auth ok (no rate_limits in rollout)"
-            return slot, "ok", detail, record
-        if rc is None:
-            detail = (
-                "auth ok (response was streaming when timeout fired)"
-                if record
-                else "timed out without capturing rate_limits"
-            )
-            return slot, "ok", detail, record
-        last_err = ""
-        for line in reversed(combined.splitlines()):
-            if line.strip():
-                last_err = line.strip()
-                break
-        return slot, "error", f"probe exited {rc}: {last_err[:120]}", record
-    finally:
-        shutil.rmtree(tmp_root, ignore_errors=True)
-
-
-def seed_slots(
-    slots: list[str],
-    max_concurrency: int = 4,
-    probe_timeout: float = 30.0,
-) -> list[tuple[str, str, str]]:
-    """Probe slots in parallel via isolated CODEX_HOMEs and persist the results.
-
-    Captured rate_limits are merged into the persisted usage store (per-slot,
-    higher `scanned_at` wins). The user's live `~/.codex/auth.json` is never
-    touched, so concurrent codex sessions are unaffected.
-
-    Returns [(slot, status, detail), ...] sorted by slot.
-    """
-    if not slots:
-        return []
-    seq = load_sequence()
-    accounts = seq.get("accounts", {})
-    targets = sorted({str(s) for s in slots if str(s) in accounts}, key=int)
-    if not targets:
-        return []
-
-    from .usage import merge_into_persisted
-
-    real = find_real_codex()
-    workers = max(1, min(len(targets), max_concurrency))
-    sys.stderr.write(
-        f"codex-swap: probing {len(targets)} slot(s) in parallel "
-        f"(concurrency={workers}, timeout={probe_timeout:.0f}s)\n"
+def add_auth_file(auth_path, *, mark_active=False, source_label=""):
+    return _core_add_auth_file(
+        _CODEX, _paths_now(), auth_path, mark_active=mark_active, source_label=source_label
     )
 
-    results: list[tuple[str, str, str]] = []
-    seeds: dict[str, dict] = {}
-    futures_map: dict = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        for slot in targets:
-            snapshot = ACCOUNTS_DIR / slot / "auth.json"
-            future = pool.submit(_probe_slot_isolated, slot, snapshot, real, probe_timeout)
-            futures_map[future] = slot
-        for future in concurrent.futures.as_completed(futures_map):
-            slot = futures_map[future]
-            try:
-                slot, status, detail, record = future.result()
-            except Exception as exc:  # noqa: BLE001 — surface anything from the probe
-                status, detail, record = "error", f"probe raised: {exc!r}"[:200], None
-            sys.stderr.write(f"codex-swap: slot {slot}: {status} — {detail[:100]}\n")
-            results.append((slot, status, detail))
-            if isinstance(record, dict):
-                seeds[slot] = record
 
-    if seeds:
-        merge_into_persisted(seeds)
-
-    results.sort(key=lambda r: int(r[0]))
-    return results
+def remove(target):
+    return _core_remove(_CODEX, _paths_now(), target)
 
 
-def verify_all() -> list[tuple[str, str, str]]:
-    """Switch into each slot, exercise auth with a real call, report status.
+def switch_to(target):
+    return _core_switch_to(_CODEX, _paths_now(), target)
 
-    Returns [(slot, status, detail), ...]. Status is 'ok', 'rate_limited',
-    'broken', or 'error'.
-    Restores the active slot afterwards. Each successful probe also captures
-    any rotated tokens via stash_active so snapshots stay current.
+
+def rotate():
+    return _core_rotate(_CODEX, _paths_now())
+
+
+def reauth(target):
+    return _core_reauth(_CODEX, _paths_now(), target)
+
+
+def verify_all():
+    return _core_verify_all(_CODEX, _paths_now())
+
+
+def reconnect_broken():
+    return _core_reconnect_broken(_CODEX, _paths_now())
+
+
+def seed_slots(slots_list, max_concurrency=4, probe_timeout=30.0):
+    return _core_seed_slots(
+        _CODEX,
+        _paths_now(),
+        slots_list,
+        max_concurrency=max_concurrency,
+        probe_timeout=probe_timeout,
+    )
+
+
+def slot_for_auth(seq, auth):
+    return slot_for_credentials(_CODEX, seq, auth)
+
+
+# --- internal probes (used directly by tests) --------------------------------
+
+
+def _probe_slot(real_codex, timeout=10.0):
+    """Probe the active slot. Returns (status, detail)."""
+    return _oauth.probe_active_slot(timeout=timeout)
+
+
+def _probe_slot_isolated(slot, snapshot_path, real_codex, timeout=30.0):
+    """Compatibility wrapper — takes the old (slot, snapshot_path, ...) shape.
+
+    The original signature passed an `auth.json` path; the new core protocol
+    passes a slot directory. We accept either to support older callers/tests.
     """
-    seq = load_sequence()
-    if not seq.get("accounts"):
-        return []
-    real = find_real_codex()
-    starting = current_slot(seq)
-    results: list[tuple[str, str, str]] = []
-    for slot in sorted(seq["accounts"], key=lambda s: int(s)):
-        rc, _ = switch_to(slot)
-        if rc != 0:
-            results.append((slot, "switch_failed", ""))
-            continue
-        status, detail = _probe_slot(real)
-        # Capture rotated tokens before we move to the next slot.
-        stash_active(load_sequence())
-        results.append((slot, status, detail))
-
-    if starting and starting in seq["accounts"]:
-        switch_to(starting)
-    return results
+    from pathlib import Path
+    p = Path(snapshot_path)
+    snapshot_dir = p.parent if p.name == "auth.json" else p
+    return _oauth.probe_slot_isolated(slot, snapshot_dir, real_codex, timeout=timeout)
 
 
-def reconnect_broken() -> tuple[int, list[str], list[str]]:
-    """Verify every slot, then reauth any that came back broken.
-
-    Returns (overall_rc, fixed, still_broken). The user is prompted to log
-    into each broken slot's expected account in turn.
-    """
-    results = verify_all()
-    broken_slots = [slot for slot, status, _ in results if status == "broken"]
-    if not broken_slots:
-        return 0, [], []
-
-    seq = load_sequence()
-    print(f"\nFound {len(broken_slots)} broken slot(s). Walking you through a fresh login for each.")
-    print("(We'll never call 'codex logout', so your other slots stay safe.)\n")
-
-    fixed: list[str] = []
-    still_broken: list[str] = []
-    for slot in broken_slots:
-        email = seq["accounts"].get(slot, {}).get("email") or "(unknown email)"
-        print(f"\n--- Slot {slot}: {email} ---")
-        rc, msg = reauth(slot)
-        print(msg)
-        if rc == 0:
-            fixed.append(slot)
-        else:
-            still_broken.append(slot)
-
-    return (1 if still_broken else 0), fixed, still_broken
+def _resolve(seq, target):
+    return resolve_slot(seq, target)
 
 
-def _resolve(seq: dict, target: str) -> str | None:
-    target = str(target)
-    for slot, acc in seq["accounts"].items():
-        if (
-            str(slot) == target
-            or acc.get("email") == target
-            or acc.get("account_id") == target
-            or acc.get("auth_fingerprint") == target
-            or acc.get("label") == target
-        ):
-            return str(slot)
-    return None
-
-
-def resolve_slot(seq: dict, target: str) -> str | None:
-    """Public alias for _resolve — accepts slot id, email, account_id, etc."""
-    return _resolve(seq, target)
+__all__ = [
+    "ACCOUNTS_DIR",
+    "AUTH_PATH",
+    "SEQUENCE_PATH",
+    "STATE_PATH",
+    "_probe_slot",
+    "_probe_slot_isolated",
+    "_resolve",
+    "add_auth_file",
+    "add_current",
+    "current_slot",
+    "load_sequence",
+    "load_state",
+    "next_free_slot",
+    "reauth",
+    "reconnect_broken",
+    "remove",
+    "resolve_slot",
+    "rotate",
+    "save_sequence",
+    "save_state",
+    "seed_slots",
+    "slot_for_account_id",
+    "slot_for_auth",
+    "stash_active",
+    "subprocess",
+    "switch_to",
+    "verify_all",
+]
